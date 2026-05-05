@@ -1,0 +1,51 @@
+# Rust
+target/
+Cargo.lock
+**/*.rs.bk
+
+# Build artifacts
+dist/
+build/
+release/
+debug/
+
+# Logs
+logs/
+*.log
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Documentation / generated files
+docs/_site/
+*.md.html
+
+# Coverage
+coverage/
+*.profraw
+*.profdata
+
+# Rust toolchain / cache
+rustfmt.toml.bk
+clippy.toml.bk
+
+# Local config
+local.settings.json
