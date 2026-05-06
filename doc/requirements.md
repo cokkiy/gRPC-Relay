@@ -22,23 +22,23 @@ gRPC-Relay 实现跨网域的 gRPC 通信中继，使处于内网（无公网 IP
 
 ### 2.1 核心角色
 
-| 角色 | 定义 | 职责 |
-|------|------|------|
-| **Device** | 物理设备，可能是 IoT 设备、工作站或其他计算设备 | 运行 stationService，执行业务逻辑 |
-| **stationService** | 运行在 Device 上的代理进程 | 与 Relay 保持长连接，接收控制命令，上报遥测数据 |
-| **Controller** | 具有人机交互功能的管理控制系统 | 发现设备、发起连接、发送控制命令、接收数据 |
-| **Relay** | 中继服务器 | 管理设备长连接，转发 gRPC 流量，提供服务发现接口 |
-| **MQTT Broker** | 消息代理服务器 | 传输遥测数据和设备上下线通知 |
+| 角色               | 定义                                            | 职责                                             |
+| ------------------ | ----------------------------------------------- | ------------------------------------------------ |
+| **Device**         | 物理设备，可能是 IoT 设备、工作站或其他计算设备 | 运行 stationService，执行业务逻辑                |
+| **stationService** | 运行在 Device 上的代理进程                      | 与 Relay 保持长连接，接收控制命令，上报遥测数据  |
+| **Controller**     | 具有人机交互功能的管理控制系统                  | 发现设备、发起连接、发送控制命令、接收数据       |
+| **Relay**          | 中继服务器                                      | 管理设备长连接，转发 gRPC 流量，提供服务发现接口 |
+| **MQTT Broker**    | 消息代理服务器                                  | 传输遥测数据和设备上下线通知                     |
 
 ### 2.2 关键概念
 
-| 概念 | 定义 |
-|------|------|
-| **device_id** | 设备的全局唯一标识符，基于设备名称、MAC 地址或序列号生成 |
-| **connection_id** | Relay 为每个活跃连接分配的会话标识符，绑定到 device_id |
-| **session** | 从设备连接建立到断开的完整生命周期 |
-| **stream** | gRPC 双向流，用于传输控制命令和数据 |
-| **endpoint** | 设备在 Relay 上的访问端点信息，包括 connection_id、relay_address、timestamp 等 |
+| 概念              | 定义                                                                           |
+| ----------------- | ------------------------------------------------------------------------------ |
+| **device_id**     | 设备的全局唯一标识符，基于设备名称、MAC 地址或序列号生成                       |
+| **connection_id** | Relay 为每个活跃连接分配的会话标识符，绑定到 device_id                         |
+| **session**       | 从设备连接建立到断开的完整生命周期                                             |
+| **stream**        | gRPC 双向流，用于传输控制命令和数据                                            |
+| **endpoint**      | 设备在 Relay 上的访问端点信息，包括 connection_id、relay_address、timestamp 等 |
 
 ---
 
@@ -70,19 +70,19 @@ gRPC-Relay 实现跨网域的 gRPC 通信中继，使处于内网（无公网 IP
 
 ### 3.2 协议选择和分层
 
-| 链路 | 协议 | 说明 |
-|------|------|------|
-| **Device ↔ Relay** | gRPC over QUIC | 长连接，利用 QUIC 的低延迟和连接迁移特性 |
-| **Controller ↔ Relay** | gRPC over HTTP/2（首版）<br>可选 QUIC（后续） | 首版使用成熟的 HTTP/2，后续可升级 QUIC |
-| **遥测数据传输** | MQTT | 设备、Relay 向 MQTT Broker 发布遥测数据 |
-| **服务发现** | MQTT（通知为主）<br>gRPC 查询接口（辅助） | 设备上下线通过 MQTT 通知，Controller 可通过 gRPC 查询在线设备列表 |
-| **降级策略** | TLS/TCP | QUIC 不可用时自动降级到 TLS over TCP |
+| 链路                   | 协议                                          | 说明                                                              |
+| ---------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
+| **Device ↔ Relay**     | gRPC over QUIC                                | 长连接，利用 QUIC 的低延迟和连接迁移特性                          |
+| **Controller ↔ Relay** | gRPC over HTTP/2（首版）<br>可选 QUIC（后续） | 首版使用成熟的 HTTP/2，后续可升级 QUIC                            |
+| **遥测数据传输**       | MQTT                                          | 设备、Relay 向 MQTT Broker 发布遥测数据                           |
+| **服务发现**           | MQTT（通知为主）<br>gRPC 查询接口（辅助）     | 设备上下线通过 MQTT 通知，Controller 可通过 gRPC 查询在线设备列表 |
+| **降级策略**           | TLS/TCP                                       | QUIC 不可用时自动降级到 TLS over TCP                              |
 
 **MQTT Broker 部署**：独立部署，与 Relay 解耦，便于扩展和维护。
 
 ### 3.3 网络拓扑
 
-参考补充文档中的流程图，见 [第17节 系统数据和遥测流图](#section17)，系统支持：
+参考补充文档中的流程图，见 [全系统概览图](full_sysytem_overview.md)，系统支持：
 - 多个网域（Network1, Network2, ...）
 - 每个网域内有多个 Device 和一个 Relay
 - 多个 Controller 可连接到多个 Relay
@@ -520,35 +520,35 @@ Payload (JSON):
 
 **Relay 遥测参数说明**：
 
-| 类别 | 参数 | 说明 | 用途 |
-|------|------|------|------|
-| **系统指标** | `cpu_usage_percent` | CPU 使用率 | 监控资源瓶颈 |
-| | `memory_usage_percent` | 内存使用率 | 监控内存压力 |
-| | `memory_used_bytes` | 已用内存字节数 | 容量规划 |
-| | `network_rx/tx_bytes_per_sec` | 网络收发速率 | 监控带宽使用 |
-| | `open_file_descriptors` | 打开的文件描述符数 | 检测连接泄漏 |
-| | `goroutines` | Go 协程数（如使用 Go） | 检测协程泄漏 |
-| | `uptime_seconds` | 运行时长 | 稳定性监控 |
-| **连接指标** | `total_device_connections` | 设备连接总数 | 容量监控 |
-| | `active_device_connections` | 活跃设备连接数 | 实时负载 |
-| | `device_connections_by_region` | 按区域分组的连接数 | 地域分布分析 |
-| | `connection_rate_per_min` | 每分钟新建连接数 | 流量趋势 |
-| | `failed_auth_rate_per_min` | 认证失败率 | 安全监控 |
-| **流指标** | `total_active_streams` | 活跃流总数 | 并发监控 |
-| | `streams_by_method` | 按方法分组的流数 | 业务分析 |
-| | `stream_error_rate_per_min` | 流错误率 | 质量监控 |
-| **性能指标** | `p50/p95/p99_relay_latency_ms` | 延迟分位数 | SLA 监控 |
-| | `avg_throughput_mbps` | 平均吞吐量 | 性能评估 |
-| | `requests_per_second` | 每秒请求数 | 负载监控 |
-| **错误指标** | `errors_by_code` | 按错误码分组的错误数 | 故障诊断 |
-| | `connection_timeout_count` | 连接超时次数 | 网络质量 |
-| **队列指标** | `pending_messages_to_devices` | 待发送到设备的消息数 | 背压监控 |
-| | `queue_overflow_count` | 队列溢出次数 | 容量告警 |
-| | `avg_queue_wait_time_ms` | 平均队列等待时间 | 延迟分析 |
-| **MQTT 指标** | `mqtt_connected` | MQTT 连接状态 | 依赖健康检查 |
-| | `mqtt_publish_error_rate_per_sec` | MQTT 发布错误率 | 集成监控 |
-| **健康状态** | `overall_status` | 整体健康状态 | 快速判断 |
-| | `components` | 各组件健康状态 | 细粒度诊断 |
+| 类别          | 参数                              | 说明                   | 用途         |
+| ------------- | --------------------------------- | ---------------------- | ------------ |
+| **系统指标**  | `cpu_usage_percent`               | CPU 使用率             | 监控资源瓶颈 |
+|               | `memory_usage_percent`            | 内存使用率             | 监控内存压力 |
+|               | `memory_used_bytes`               | 已用内存字节数         | 容量规划     |
+|               | `network_rx/tx_bytes_per_sec`     | 网络收发速率           | 监控带宽使用 |
+|               | `open_file_descriptors`           | 打开的文件描述符数     | 检测连接泄漏 |
+|               | `goroutines`                      | Go 协程数（如使用 Go） | 检测协程泄漏 |
+|               | `uptime_seconds`                  | 运行时长               | 稳定性监控   |
+| **连接指标**  | `total_device_connections`        | 设备连接总数           | 容量监控     |
+|               | `active_device_connections`       | 活跃设备连接数         | 实时负载     |
+|               | `device_connections_by_region`    | 按区域分组的连接数     | 地域分布分析 |
+|               | `connection_rate_per_min`         | 每分钟新建连接数       | 流量趋势     |
+|               | `failed_auth_rate_per_min`        | 认证失败率             | 安全监控     |
+| **流指标**    | `total_active_streams`            | 活跃流总数             | 并发监控     |
+|               | `streams_by_method`               | 按方法分组的流数       | 业务分析     |
+|               | `stream_error_rate_per_min`       | 流错误率               | 质量监控     |
+| **性能指标**  | `p50/p95/p99_relay_latency_ms`    | 延迟分位数             | SLA 监控     |
+|               | `avg_throughput_mbps`             | 平均吞吐量             | 性能评估     |
+|               | `requests_per_second`             | 每秒请求数             | 负载监控     |
+| **错误指标**  | `errors_by_code`                  | 按错误码分组的错误数   | 故障诊断     |
+|               | `connection_timeout_count`        | 连接超时次数           | 网络质量     |
+| **队列指标**  | `pending_messages_to_devices`     | 待发送到设备的消息数   | 背压监控     |
+|               | `queue_overflow_count`            | 队列溢出次数           | 容量告警     |
+|               | `avg_queue_wait_time_ms`          | 平均队列等待时间       | 延迟分析     |
+| **MQTT 指标** | `mqtt_connected`                  | MQTT 连接状态          | 依赖健康检查 |
+|               | `mqtt_publish_error_rate_per_sec` | MQTT 发布错误率        | 集成监控     |
+| **健康状态**  | `overall_status`                  | 整体健康状态           | 快速判断     |
+|               | `components`                      | 各组件健康状态         | 细粒度诊断   |
 
 **遥测数据发布频率**：
 - 系统指标：每 10 秒
@@ -558,14 +558,14 @@ Payload (JSON):
 
 ### 5.3 错误码清单
 
-| 错误码 | 说明 | Controller 处理建议 |
-|--------|------|---------------------|
-| `OK` | 成功 | 继续处理 |
-| `DEVICE_OFFLINE` | 目标设备离线 | 等待设备上线通知后重试 |
-| `UNAUTHORIZED` | 认证失败 | 检查 Token 是否有效，重新认证 |
-| `DEVICE_NOT_FOUND` | 设备不存在 | 检查 device_id 是否正确 |
-| `RATE_LIMITED` | 请求频率超限 | 指数退避后重试 |
-| `INTERNAL_ERROR` | Relay 内部错误 | 记录日志，切换到备用 Relay（如果有） |
+| 错误码             | 说明           | Controller 处理建议                  |
+| ------------------ | -------------- | ------------------------------------ |
+| `OK`               | 成功           | 继续处理                             |
+| `DEVICE_OFFLINE`   | 目标设备离线   | 等待设备上线通知后重试               |
+| `UNAUTHORIZED`     | 认证失败       | 检查 Token 是否有效，重新认证        |
+| `DEVICE_NOT_FOUND` | 设备不存在     | 检查 device_id 是否正确              |
+| `RATE_LIMITED`     | 请求频率超限   | 指数退避后重试                       |
+| `INTERNAL_ERROR`   | Relay 内部错误 | 记录日志，切换到备用 Relay（如果有） |
 
 ---
 
@@ -592,11 +592,11 @@ Payload (JSON):
 **采用 RBAC（基于角色的访问控制）+ 设备归属**
 
 #### 角色定义
-| 角色 | 权限 |
-|------|------|
-| `admin` | 可访问所有设备，可执行所有操作 |
-| `operator` | 可访问授权的设备，可执行控制命令和数据传输 |
-| `viewer` | 可访问授权的设备，只能查询状态，不能执行控制命令 |
+| 角色       | 权限                                             |
+| ---------- | ------------------------------------------------ |
+| `admin`    | 可访问所有设备，可执行所有操作                   |
+| `operator` | 可访问授权的设备，可执行控制命令和数据传输       |
+| `viewer`   | 可访问授权的设备，只能查询状态，不能执行控制命令 |
 
 #### 设备归属
 - 每个设备归属于一个 Project 或 Tenant
@@ -641,24 +641,24 @@ Payload (JSON):
 
 ### 7.1 性能指标
 
-| 指标 | 目标值 | 测量方法 |
-|------|--------|----------|
-| **Relay 单跳额外延迟** | P50 < 5ms, P99 < 20ms | 端到端延迟 - 网络延迟 |
-| **单实例并发连接数** | 10,000 长连接 | 压测工具模拟 10K 设备连接 |
-| **并发活跃流数** | 1,000 | 同时有 1K 个 Controller 与设备通信 |
-| **单流带宽上限** | 10 MB/s | 单个文件传输流的最大速率 |
-| **内存预算** | < 2 GB（10K 连接） | 监控 Relay 进程的 RSS |
-| **CPU 使用率** | < 80%（10K 连接，1K 活跃流） | 监控 Relay 进程的 CPU 使用率 |
-| **二进制大小** | 目标 < 50 MB（静态链接） | 编译后的可执行文件大小 |
+| 指标                   | 目标值                       | 测量方法                           |
+| ---------------------- | ---------------------------- | ---------------------------------- |
+| **Relay 单跳额外延迟** | P50 < 5ms, P99 < 20ms        | 端到端延迟 - 网络延迟              |
+| **单实例并发连接数**   | 10,000 长连接                | 压测工具模拟 10K 设备连接          |
+| **并发活跃流数**       | 1,000                        | 同时有 1K 个 Controller 与设备通信 |
+| **单流带宽上限**       | 10 MB/s                      | 单个文件传输流的最大速率           |
+| **内存预算**           | < 2 GB（10K 连接）           | 监控 Relay 进程的 RSS              |
+| **CPU 使用率**         | < 80%（10K 连接，1K 活跃流） | 监控 Relay 进程的 CPU 使用率       |
+| **二进制大小**         | 目标 < 50 MB（静态链接）     | 编译后的可执行文件大小             |
 
 ### 7.2 可用性目标
 
-| 指标 | 目标值 |
-|------|--------|
-| **服务可用性** | 99.9%（首版单节点） |
-| **设备重连时间** | < 10 秒（网络恢复后） |
-| **会话恢复成功率** | > 95%（300 秒内重连） |
-| **MTTR（平均恢复时间）** | < 5 分钟 |
+| 指标                     | 目标值                |
+| ------------------------ | --------------------- |
+| **服务可用性**           | 99.9%（首版单节点）   |
+| **设备重连时间**         | < 10 秒（网络恢复后） |
+| **会话恢复成功率**       | > 95%（300 秒内重连） |
+| **MTTR（平均恢复时间）** | < 5 分钟              |
 
 ### 7.3 安全要求
 
@@ -866,22 +866,22 @@ relay_component_health{component="grpc_server"|"quic_listener"|"mqtt_client"|"au
 
 **审计日志字段说明**
 
-| 字段 | 说明 | 必填 |
-|------|------|------|
-| `timestamp` | 事件发生时间（ISO 8601 格式） | ✅ |
-| `event_type` | 事件类型 | ✅ |
-| `relay_id` | Relay 实例标识 | ✅ |
-| `device_id` | 设备标识 | 条件 |
-| `controller_id` | 控制端标识 | 条件 |
-| `connection_id` | 连接标识 | 条件 |
-| `method_name` | gRPC 方法名 | 条件 |
-| `sequence_number` | 请求序列号 | 条件 |
-| `result` | 操作结果 | ✅ |
-| `error_code` | 错误码 | 条件 |
-| `latency_ms` | 延迟（毫秒） | 条件 |
-| `bytes_transferred` | 传输字节数 | 条件 |
-| `source_ip` | 来源 IP 地址 | ✅ |
-| `metadata` | 附加元数据 | ❌ |
+| 字段                | 说明                          | 必填 |
+| ------------------- | ----------------------------- | ---- |
+| `timestamp`         | 事件发生时间（ISO 8601 格式） | ✅    |
+| `event_type`        | 事件类型                      | ✅    |
+| `relay_id`          | Relay 实例标识                | ✅    |
+| `device_id`         | 设备标识                      | 条件 |
+| `controller_id`     | 控制端标识                    | 条件 |
+| `connection_id`     | 连接标识                      | 条件 |
+| `method_name`       | gRPC 方法名                   | 条件 |
+| `sequence_number`   | 请求序列号                    | 条件 |
+| `result`            | 操作结果                      | ✅    |
+| `error_code`        | 错误码                        | 条件 |
+| `latency_ms`        | 延迟（毫秒）                  | 条件 |
+| `bytes_transferred` | 传输字节数                    | 条件 |
+| `source_ip`         | 来源 IP 地址                  | ✅    |
+| `metadata`          | 附加元数据                    | ❌    |
 
 **审计日志不记录**：
 - 加密的 payload 内容
@@ -891,23 +891,23 @@ relay_component_health{component="grpc_server"|"quic_listener"|"mqtt_client"|"au
 
 **事件类型清单**
 
-| 事件类型 | 说明 | 触发条件 |
-|----------|------|----------|
-| `device_connect` | 设备连接 | 设备成功建立连接 |
-| `device_disconnect` | 设备断开 | 设备主动断开或超时 |
-| `device_register` | 设备注册 | 设备首次注册或重新注册 |
-| `controller_connect` | Controller 连接 | Controller 成功建立连接 |
-| `controller_disconnect` | Controller 断开 | Controller 主动断开 |
-| `controller_request` | Controller 请求 | Controller 发起设备访问请求 |
-| `stream_created` | 流创建 | 新的双向流建立 |
-| `stream_closed` | 流关闭 | 流正常或异常关闭 |
-| `auth_failure` | 认证失败 | Token 验证失败或证书无效 |
-| `auth_success` | 认证成功 | 认证通过 |
-| `authorization_denied` | 授权拒绝 | 权限检查失败 |
-| `rate_limit` | 限流触发 | 请求频率超过限制 |
-| `session_resumed` | 会话恢复 | 设备重连后成功恢复会话 |
-| `session_expired` | 会话过期 | 会话超时被清理 |
-| `error` | 内部错误 | Relay 内部异常 |
+| 事件类型                | 说明            | 触发条件                    |
+| ----------------------- | --------------- | --------------------------- |
+| `device_connect`        | 设备连接        | 设备成功建立连接            |
+| `device_disconnect`     | 设备断开        | 设备主动断开或超时          |
+| `device_register`       | 设备注册        | 设备首次注册或重新注册      |
+| `controller_connect`    | Controller 连接 | Controller 成功建立连接     |
+| `controller_disconnect` | Controller 断开 | Controller 主动断开         |
+| `controller_request`    | Controller 请求 | Controller 发起设备访问请求 |
+| `stream_created`        | 流创建          | 新的双向流建立              |
+| `stream_closed`         | 流关闭          | 流正常或异常关闭            |
+| `auth_failure`          | 认证失败        | Token 验证失败或证书无效    |
+| `auth_success`          | 认证成功        | 认证通过                    |
+| `authorization_denied`  | 授权拒绝        | 权限检查失败                |
+| `rate_limit`            | 限流触发        | 请求频率超过限制            |
+| `session_resumed`       | 会话恢复        | 设备重连后成功恢复会话      |
+| `session_expired`       | 会话过期        | 会话超时被清理              |
+| `error`                 | 内部错误        | Relay 内部异常              |
 
 #### 分布式追踪（Tracing）
 
@@ -954,12 +954,12 @@ Trace: controller_request_to_device
 
 #### 日志级别和保留策略
 
-| 级别 | 内容 | 保留时间 | 存储位置 |
-|------|------|----------|----------|
-| `ERROR` | 错误和异常 | 30 天 | 日志聚合系统（如 ELK） |
-| `WARN` | 警告（如重连、超时） | 14 天 | 日志聚合系统 |
-| `INFO` | 关键事件（如设备上下线） | 7 天 | 日志聚合系统 |
-| `DEBUG` | 详细调试信息 | 1 天 | 本地文件（生产环境关闭） |
+| 级别    | 内容                     | 保留时间 | 存储位置                 |
+| ------- | ------------------------ | -------- | ------------------------ |
+| `ERROR` | 错误和异常               | 30 天    | 日志聚合系统（如 ELK）   |
+| `WARN`  | 警告（如重连、超时）     | 14 天    | 日志聚合系统             |
+| `INFO`  | 关键事件（如设备上下线） | 7 天     | 日志聚合系统             |
+| `DEBUG` | 详细调试信息             | 1 天     | 本地文件（生产环境关闭） |
 
 **日志轮转配置**
 - 单个日志文件最大 100 MB
@@ -970,26 +970,26 @@ Trace: controller_request_to_device
 
 **关键告警**
 
-| 指标 | 阈值 | 告警级别 | 处理建议 |
-|------|------|----------|----------|
-| **错误率** | > 1% | Warning | 检查日志，分析错误原因 |
-| | > 5% | Critical | 立即介入，可能需要回滚 |
-| **P99 延迟** | > 50ms | Warning | 检查网络和资源使用 |
-| | > 100ms | Critical | 扩容或优化代码 |
-| **连接失败率** | > 5% | Warning | 检查网络和认证服务 |
-| | > 10% | Critical | 可能是 DDoS 或服务故障 |
-| **CPU 使用率** | > 80% | Warning | 准备扩容 |
-| | > 95% | Critical | 立即扩容或限流 |
-| **内存使用率** | > 85% | Warning | 检查内存泄漏 |
-| | > 95% | Critical | 重启服务或扩容 |
-| **活跃连接数** | > 9000 | Warning | 接近容量上限 |
-| | > 9500 | Critical | 拒绝新连接或扩容 |
-| **队列深度** | > 5000 | Warning | 处理速度跟不上 |
-| | > 8000 | Critical | 可能导致消息丢失 |
-| **MQTT 断连** | 断连 > 30 秒 | Warning | 检查 MQTT Broker |
-| | 断连 > 60 秒 | Critical | 切换到备用 Broker |
-| **认证失败率** | > 10 次/分钟 | Warning | 可能是攻击 |
-| | > 50 次/分钟 | Critical | 启动 IP 封禁 |
+| 指标           | 阈值         | 告警级别 | 处理建议               |
+| -------------- | ------------ | -------- | ---------------------- |
+| **错误率**     | > 1%         | Warning  | 检查日志，分析错误原因 |
+|                | > 5%         | Critical | 立即介入，可能需要回滚 |
+| **P99 延迟**   | > 50ms       | Warning  | 检查网络和资源使用     |
+|                | > 100ms      | Critical | 扩容或优化代码         |
+| **连接失败率** | > 5%         | Warning  | 检查网络和认证服务     |
+|                | > 10%        | Critical | 可能是 DDoS 或服务故障 |
+| **CPU 使用率** | > 80%        | Warning  | 准备扩容               |
+|                | > 95%        | Critical | 立即扩容或限流         |
+| **内存使用率** | > 85%        | Warning  | 检查内存泄漏           |
+|                | > 95%        | Critical | 重启服务或扩容         |
+| **活跃连接数** | > 9000       | Warning  | 接近容量上限           |
+|                | > 9500       | Critical | 拒绝新连接或扩容       |
+| **队列深度**   | > 5000       | Warning  | 处理速度跟不上         |
+|                | > 8000       | Critical | 可能导致消息丢失       |
+| **MQTT 断连**  | 断连 > 30 秒 | Warning  | 检查 MQTT Broker       |
+|                | 断连 > 60 秒 | Critical | 切换到备用 Broker      |
+| **认证失败率** | > 10 次/分钟 | Warning  | 可能是攻击             |
+|                | > 50 次/分钟 | Critical | 启动 IP 封禁           |
 
 **告警通知渠道**
 - **Warning**：发送到 Slack/钉钉/企业微信
@@ -2197,16 +2197,16 @@ curl -X POST https://auth.example.com/api/v1/tokens/revoke \
 
 **里程碑**：
 
-| 周次 | 里程碑 | 交付物 |
-|------|--------|--------|
-| Week 1-2 | 架构设计和技术选型 | 架构文档、技术选型报告 |
-| Week 3-4 | 核心框架搭建 | gRPC 服务框架、QUIC 集成 |
-| Week 5-6 | 设备连接和会话管理 | 设备注册、心跳、重连逻辑 |
-| Week 7-8 | Controller 接入和数据中继 | 流转发、权限控制 |
-| Week 9 | MQTT 集成和服务发现 | MQTT 通知、查询接口 |
-| Week 10 | 观测性和运维工具 | 指标、日志、健康检查 |
-| Week 11 | 测试和优化 | 单元测试、集成测试、性能测试 |
-| Week 12 | 文档和发布 | 用户文档、运维手册、v1.0 发布 |
+| 周次     | 里程碑                    | 交付物                        |
+| -------- | ------------------------- | ----------------------------- |
+| Week 1-2 | 架构设计和技术选型        | 架构文档、技术选型报告        |
+| Week 3-4 | 核心框架搭建              | gRPC 服务框架、QUIC 集成      |
+| Week 5-6 | 设备连接和会话管理        | 设备注册、心跳、重连逻辑      |
+| Week 7-8 | Controller 接入和数据中继 | 流转发、权限控制              |
+| Week 9   | MQTT 集成和服务发现       | MQTT 通知、查询接口           |
+| Week 10  | 观测性和运维工具          | 指标、日志、健康检查          |
+| Week 11  | 测试和优化                | 单元测试、集成测试、性能测试  |
+| Week 12  | 文档和发布                | 用户文档、运维手册、v1.0 发布 |
 
 ### 11.2 后续版本规划
 
@@ -2233,17 +2233,17 @@ curl -X POST https://auth.example.com/api/v1/tokens/revoke \
 
 ## 12. 风险和缓解措施
 
-| 风险 | 影响 | 概率 | 缓解措施 |
-|------|------|------|----------|
-| **QUIC 库不成熟** | 高 | 中 | 选择成熟的 QUIC 库（如 quinn），准备 TCP 降级方案 |
-| **性能指标未达标** | 高 | 中 | 早期进行性能测试，及时优化或调整指标 |
-| **MQTT Broker 成为瓶颈** | 中 | 低 | 使用高性能 MQTT Broker（如 EMQX），准备降级方案 |
-| **认证服务不可用** | 高 | 低 | Token 缓存，离线验证，多认证服务实例 |
-| **设备证书管理复杂** | 中 | 中 | 提供 Token 认证作为备选，简化设备侧实现 |
-| **会话恢复失败率高** | 中 | 中 | 优化重连逻辑，增加会话超时时间，持久化会话状态 |
-| **端到端加密性能开销大** | 中 | 低 | 使用高效加密算法（如 ChaCha20-Poly1305），硬件加速 |
-| **多 Relay 节点会话迁移困难** | 高 | 高 | v1.0 不支持多节点，v1.2 再实现，使用 Redis 共享状态 |
-| **开发周期延误** | 中 | 中 | 分阶段实施，MVP 优先，非核心功能后置 |
+| 风险                          | 影响 | 概率 | 缓解措施                                            |
+| ----------------------------- | ---- | ---- | --------------------------------------------------- |
+| **QUIC 库不成熟**             | 高   | 中   | 选择成熟的 QUIC 库（如 quinn），准备 TCP 降级方案   |
+| **性能指标未达标**            | 高   | 中   | 早期进行性能测试，及时优化或调整指标                |
+| **MQTT Broker 成为瓶颈**      | 中   | 低   | 使用高性能 MQTT Broker（如 EMQX），准备降级方案     |
+| **认证服务不可用**            | 高   | 低   | Token 缓存，离线验证，多认证服务实例                |
+| **设备证书管理复杂**          | 中   | 中   | 提供 Token 认证作为备选，简化设备侧实现             |
+| **会话恢复失败率高**          | 中   | 中   | 优化重连逻辑，增加会话超时时间，持久化会话状态      |
+| **端到端加密性能开销大**      | 中   | 低   | 使用高效加密算法（如 ChaCha20-Poly1305），硬件加速  |
+| **多 Relay 节点会话迁移困难** | 高   | 高   | v1.0 不支持多节点，v1.2 再实现，使用 Redis 共享状态 |
+| **开发周期延误**              | 中   | 中   | 分阶段实施，MVP 优先，非核心功能后置                |
 
 ---
 
@@ -2251,17 +2251,17 @@ curl -X POST https://auth.example.com/api/v1/tokens/revoke \
 
 ### 13.1 术语表
 
-| 术语 | 英文 | 定义 |
-|------|------|------|
-| 设备 | Device | 物理设备，运行 stationService |
-| 站点服务 | stationService | 运行在设备上的代理进程 |
-| 控制端 | Controller | 管理控制系统 |
-| 中继 | Relay | 中继服务器 |
-| 连接标识 | connection_id | Relay 分配的会话标识符 |
-| 序列号 | sequence_number | 请求的全局唯一标识符 |
-| 端点 | endpoint | 设备在 Relay 上的访问信息 |
-| 幂等性 | Idempotency | 重复执行相同操作结果一致 |
-| 会话恢复 | Session Recovery | 重连后恢复之前的会话状态 |
+| 术语     | 英文             | 定义                          |
+| -------- | ---------------- | ----------------------------- |
+| 设备     | Device           | 物理设备，运行 stationService |
+| 站点服务 | stationService   | 运行在设备上的代理进程        |
+| 控制端   | Controller       | 管理控制系统                  |
+| 中继     | Relay            | 中继服务器                    |
+| 连接标识 | connection_id    | Relay 分配的会话标识符        |
+| 序列号   | sequence_number  | 请求的全局唯一标识符          |
+| 端点     | endpoint         | 设备在 Relay 上的访问信息     |
+| 幂等性   | Idempotency      | 重复执行相同操作结果一致      |
+| 会话恢复 | Session Recovery | 重连后恢复之前的会话状态      |
 
 ### 13.2 参考资料
 
@@ -2273,11 +2273,11 @@ curl -X POST https://auth.example.com/api/v1/tokens/revoke \
 
 ### 13.3 变更历史
 
-| 版本 | 日期 | 作者 | 变更内容 |
-|------|------|------|----------|
-| v1.0 | 2025-01-15 | 需求团队 | 初始版本 |
-| v2.0 | 2025-01-15 | 需求团队 | 根据评审意见重写 |
-| v2.1 | 2025-01-15 | 需求团队 | 增加
+| 版本 | 日期       | 作者     | 变更内容                    |
+| ---- | ---------- | -------- | --------------------------- |
+| v1.0 | 2025-01-15 | 需求团队 | 初始版本                    |
+| v2.0 | 2025-01-15 | 需求团队 | 根据评审意见重写            |
+| v2.1 | 2025-01-15 | 需求团队 | 增加                        |
 | v2.1 | 2025-01-15 | 需求团队 | 增加 Relay 遥测参数详细定义 |
 
 ---
@@ -2286,23 +2286,23 @@ curl -X POST https://auth.example.com/api/v1/tokens/revoke \
 
 ### 14.1 需求完整性检查清单
 
-| 类别 | 项目 | 状态 |
-|------|------|------|
-| **角色定义** | Device, stationService, Controller, Relay 明确定义 | ✅ |
-| **架构选择** | 透明性 vs 可控性权衡明确 | ✅ |
-| **协议分层** | gRPC, QUIC, MQTT, 降级策略明确 | ✅ |
-| **核心流程** | 注册、心跳、重连、会话恢复、离线流程完整 | ✅ |
-| **接口定义** | gRPC service, MQTT 主题, 错误码完整 | ✅ |
-| **权限模型** | 认证、授权、Token 管理明确 | ✅ |
-| **性能指标** | 可测量的具体指标，非理想化数字 | ✅ |
-| **安全要求** | TLS, E2E 加密, 限流, DDoS 防护 | ✅ |
-| **观测性** | 指标、日志、审计、追踪、告警完整 | ✅ |
-| **错误处理** | 连接、流、消息、会话错误处理完整 | ✅ |
-| **降级策略** | QUIC→TCP, MQTT 降级明确 | ✅ |
-| **部署方案** | Docker, Kubernetes 部署文档完整 | ✅ |
-| **运维手册** | 启动、停止、扩容、故障排查完整 | ✅ |
-| **测试策略** | 单元、集成、性能、安全测试完整 | ✅ |
-| **实施计划** | 分阶段、有里程碑、风险可控 | ✅ |
+| 类别         | 项目                                               | 状态 |
+| ------------ | -------------------------------------------------- | ---- |
+| **角色定义** | Device, stationService, Controller, Relay 明确定义 | ✅    |
+| **架构选择** | 透明性 vs 可控性权衡明确                           | ✅    |
+| **协议分层** | gRPC, QUIC, MQTT, 降级策略明确                     | ✅    |
+| **核心流程** | 注册、心跳、重连、会话恢复、离线流程完整           | ✅    |
+| **接口定义** | gRPC service, MQTT 主题, 错误码完整                | ✅    |
+| **权限模型** | 认证、授权、Token 管理明确                         | ✅    |
+| **性能指标** | 可测量的具体指标，非理想化数字                     | ✅    |
+| **安全要求** | TLS, E2E 加密, 限流, DDoS 防护                     | ✅    |
+| **观测性**   | 指标、日志、审计、追踪、告警完整                   | ✅    |
+| **错误处理** | 连接、流、消息、会话错误处理完整                   | ✅    |
+| **降级策略** | QUIC→TCP, MQTT 降级明确                            | ✅    |
+| **部署方案** | Docker, Kubernetes 部署文档完整                    | ✅    |
+| **运维手册** | 启动、停止、扩容、故障排查完整                     | ✅    |
+| **测试策略** | 单元、集成、性能、安全测试完整                     | ✅    |
+| **实施计划** | 分阶段、有里程碑、风险可控                         | ✅    |
 
 ### 14.2 关键技术决策总结
 
@@ -2376,20 +2376,20 @@ curl -X POST https://auth.example.com/api/v1/tokens/revoke \
 
 ### 14.3 与原需求的主要改进
 
-| 原需求问题 | 改进方案 |
-|------------|----------|
-| "透明转发"与"深度授权"矛盾 | 明确可控中继模式，元数据可见，payload 加密 |
-| "微秒级延迟"不现实 | 改为 P50 < 5ms, P99 < 20ms（可测量） |
-| "单实例数万连接"缺少前提 | 明确 10K 连接，1K 活跃流，单流 10MB/s |
-| "500KiB 二进制"过于乐观 | 改为 < 50MB（静态链接，更现实） |
-| 角色定义不清 | 明确 Device, stationService, Controller 职责 |
-| 缺少状态机 | 补充完整的生命周期和状态转换 |
-| 缺少接口定义 | 提供完整的 gRPC service 和 MQTT 主题定义 |
-| 权限模型空白 | 补充 RBAC 模型和 Token 管理 |
-| 缺少错误处理 | 补充连接、流、消息、会话错误处理 |
-| 缺少运维方案 | 补充部署、配置、运维、故障排查手册 |
-| 服务发现方案单一 | 提供三种方式互为备份和验证 |
-| 缺少 Relay 遥测 | 补充详细的 Relay 遥测参数定义 |
+| 原需求问题                 | 改进方案                                     |
+| -------------------------- | -------------------------------------------- |
+| "透明转发"与"深度授权"矛盾 | 明确可控中继模式，元数据可见，payload 加密   |
+| "微秒级延迟"不现实         | 改为 P50 < 5ms, P99 < 20ms（可测量）         |
+| "单实例数万连接"缺少前提   | 明确 10K 连接，1K 活跃流，单流 10MB/s        |
+| "500KiB 二进制"过于乐观    | 改为 < 50MB（静态链接，更现实）              |
+| 角色定义不清               | 明确 Device, stationService, Controller 职责 |
+| 缺少状态机                 | 补充完整的生命周期和状态转换                 |
+| 缺少接口定义               | 提供完整的 gRPC service 和 MQTT 主题定义     |
+| 权限模型空白               | 补充 RBAC 模型和 Token 管理                  |
+| 缺少错误处理               | 补充连接、流、消息、会话错误处理             |
+| 缺少运维方案               | 补充部署、配置、运维、故障排查手册           |
+| 服务发现方案单一           | 提供三种方式互为备份和验证                   |
+| 缺少 Relay 遥测            | 补充详细的 Relay 遥测参数定义                |
 
 ### 14.4 实施建议
 
@@ -2508,13 +2508,13 @@ curl -X POST https://auth.example.com/api/v1/tokens/revoke \
 
 本需求规格说明书已经过以下人员评审和批准：
 
-| 角色 | 姓名 | 签名 | 日期 |
-|------|------|------|------|
-| 产品负责人 | | | |
-| 技术负责人 | | | |
-| 架构师 | | | |
-| 安全负责人 | | | |
-| 运维负责人 | | | |
+| 角色       | 姓名 | 签名 | 日期 |
+| ---------- | ---- | ---- | ---- |
+| 产品负责人 |      |      |      |
+| 技术负责人 |      |      |      |
+| 架构师     |      |      |      |
+| 安全负责人 |      |      |      |
+| 运维负责人 |      |      |      |
 
 ---
 
@@ -2525,65 +2525,3 @@ curl -X POST https://auth.example.com/api/v1/tokens/revoke \
 2. 搭建开发环境
 3. 创建项目仓库
 4. 开始 Week 1-2 架构设计和技术选型
-
----
-## 17. Note {#section17}
-
-## The FULL System Data and Telemetry Flow 
-
-```mermaid
-flowchart LR
- subgraph Network1
-    direction LR
-    IoT_a1(IoT_1)-->|gRPC over QUIC/HTTP2/HTTP3|Relay_1
-    IoT_a1(IoT_1)-->|Telemetry over MQTT|Broker_1(MQTT Broker)
-    IoT_a2(IoT_2)-->|...|Relay_1
-    IoT_a2(IoT_2)-->|Telemetry over MQTT|Broker_1(MQTT Broker)
-    IoT_a3(...) -->|...|Relay_1
-    IoT_a3(...) -->|Telemetry over MQTT|Broker_1(MQTT Broker)
-    IoT_an-->|...|Relay_1
-    IoT_an-->|Telemetry over MQTT|Broker_1(MQTT Broker)
-    WS_a1(WorkStation_1)-->|gRPC over QUIC/HTTP2/HTTP3|Relay_1
-    WS_a1(WorkStation_1)-->|Telemetry over MQTT|Broker_1(MQTT Broker)
-    WS_a2(WorkStation_2)-->|...|Relay_1
-    WS_a2(WorkStation_2)-->|Telemetry over MQTT|Broker_1(MQTT Broker)
-    WS_a3(...)-->|...|Relay_1
-    WS_a3(...)-->|Telemetry over MQTT|Broker_1(MQTT Broker)
-    WS_a4(WorkStation_n)-->|...|Relay_1
-    WS_a4(WorkStation_n)-->|Telemetry over MQTT|Broker_1(MQTT Broker)
-  end
-
-  subgraph Network2
-    direction LR
-    IoT_b1(IoT_1)-->|gRPC over QUIC/HTTP2/HTTP3|Relay_2
-    IoT_b1(IoT_2)-->|Telemetry over MQTT|Broker_2(MQTT Broker)
-    IoT_b2(...)-->|...|Relay_2
-    IoT_b2(...)-->|Telemetry over MQTT|Broker_2(MQTT Broker)
-    IoT_bn(IoT_n)-->|...|Relay_2
-    IoT_bn(IoT_n)-->|Telemetry over MQTT|Broker_2(MQTT Broker)
-    WS_b1(WorkStation_1)-->|gRPC over QUIC/HTTP2/HTTP3|Relay_2
-    WS_b1(WorkStation_1)-->|Telemetry over MQTT|Broker_2(MQTT Broker)
-    WS_b2(...)-->|...|Relay_2
-    WS_b2(...)-->|Telemetry over MQTT|Broker_2(MQTT Broker)
-    WS_bn(WorkStation_n)-->|...|Relay_2
-    WS_bn(WorkStation_n)-->|Telemetry over MQTT|Broker_2(MQTT Broker)
-  end
-  Relay_1-->|Data Trans, gRPC over QUIC/HTTP2/HTTP3|Controller1
-  Relay_2-->|Data Trans, gRPC over QUIC/HTTP2/HTTP3|Controller1
-  Relay_1-->|...|Controller2
-  Relay_2-->|...|Controller2
-  Relay_1-->|Loadbalance|Relay_2
-  Relay_2-->|Loadbalance|Relay_1
-  Controller1-->|Ctrl msg and Data trans over gPRC|Relay_1
-  Controller2-->|Ctrl msg and Data trans over gPRC|Relay_1
-  Controller1-->|...|Relay_2
-  Controller2-->|...|Relay_2
-  Relay_1-->|Telemetry over MQTT|Broker_1(MQTT Broker)
-  Relay_2-->|Telemetry over MQTT|Broker_1(MQTT Broker)
-  Relay_1-->|...|Broker_2(MQTT Broker)
-  Relay_2-->|...|Broker_2(MQTT Broker)
-  Broker_1(MQTT Broker)-->|Telemetry over MQTT|Controller1
-  Broker_2(MQTT Broker)-->|Telemetry over MQTT|Controller1
-  Broker_1(MQTT Broker)-->|Telemetry over MQTT|Controller2
-  Broker_2(MQTT Broker)-->|Telemetry over MQTT|Controller2
-```
