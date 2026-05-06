@@ -1,0 +1,15 @@
+relay:
+  id: relay-001
+  address: 0.0.0.0:50051
+  quic_address: 0.0.0.0:50052
+  max_device_connections: 10000
+  heartbeat_interval_seconds: 30
+
+observability:
+  logging:
+    level: info
+    format: json
+  health:
+    enabled: true
+    address: 0.0.0.0:8080
+    path: /health

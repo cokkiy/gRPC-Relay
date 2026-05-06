@@ -1,0 +1,21 @@
+services:
+  relay:
+    build: .
+    image: grpc-relay:latest
+    container_name: relay-001
+    ports:
+      - "50051:50051"
+      - "50052:50052/udp"
+      - "8080:8080"
+    volumes:
+      - ./config/relay.yaml:/etc/relay/relay.yaml:ro
+    environment:
+      RELAY_ID: relay-001
+      RUST_LOG: info
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped

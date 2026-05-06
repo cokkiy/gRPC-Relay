@@ -1,12 +1,16 @@
+use crate::config::LoggingConfig;
 use tracing_subscriber::{fmt, EnvFilter};
 
-pub fn init() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+pub fn init(config: &LoggingConfig) {
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level));
 
-    let subscriber = fmt::Subscriber::builder()
-        .with_env_filter(filter)
-        .json()
-        .finish();
+    let builder = fmt::Subscriber::builder().with_env_filter(filter);
+    let result = if config.format.eq_ignore_ascii_case("json") {
+        tracing::subscriber::set_global_default(builder.json().finish())
+    } else {
+        tracing::subscriber::set_global_default(builder.finish())
+    };
 
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    let _ = result;
 }

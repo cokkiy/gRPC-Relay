@@ -13,4 +13,27 @@ pub enum AppError {
         #[source]
         source: std::io::Error,
     },
+
+    #[error("invalid socket address `{address}`: {source}")]
+    InvalidSocketAddress {
+        address: String,
+        #[source]
+        source: std::net::AddrParseError,
+    },
+
+    #[error("failed to bind health server to `{address}`: {source}")]
+    HealthBind {
+        address: std::net::SocketAddr,
+        #[source]
+        source: hyper::Error,
+    },
+
+    #[error("health server failed: {0}")]
+    HealthServer(#[from] hyper::Error),
+
+    #[error("failed to wait for shutdown signal: {0}")]
+    ShutdownSignal(#[source] std::io::Error),
+
+    #[error("health server task failed: {0}")]
+    HealthTask(#[source] tokio::task::JoinError),
 }

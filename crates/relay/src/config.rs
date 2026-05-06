@@ -25,6 +25,8 @@ pub struct RelayConfig {
 pub struct ObservabilityConfig {
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub health: HealthConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -35,11 +37,31 @@ pub struct LoggingConfig {
     pub format: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct HealthConfig {
+    #[serde(default = "default_health_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_health_address")]
+    pub address: String,
+    #[serde(default = "default_health_path")]
+    pub path: String,
+}
+
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             level: default_log_level(),
             format: default_log_format(),
+        }
+    }
+}
+
+impl Default for HealthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_health_enabled(),
+            address: default_health_address(),
+            path: default_health_path(),
         }
     }
 }
@@ -54,9 +76,23 @@ impl AppConfig {
 
         let config = config::Config::builder()
             .add_source(config::File::from_str(&content, config::FileFormat::Yaml))
+            .add_source(config::Environment::default().separator("__"))
             .build()?;
 
-        Ok(config.try_deserialize()?)
+        let mut app_config: Self = config.try_deserialize()?;
+        app_config.apply_legacy_env_overrides();
+
+        Ok(app_config)
+    }
+
+    fn apply_legacy_env_overrides(&mut self) {
+        if let Ok(relay_id) = std::env::var("RELAY_ID") {
+            self.relay.id = relay_id;
+        }
+
+        if let Ok(log_level) = std::env::var("RUST_LOG") {
+            self.observability.logging.level = log_level;
+        }
     }
 }
 
@@ -78,4 +114,16 @@ fn default_log_level() -> String {
 
 fn default_log_format() -> String {
     "json".to_string()
+}
+
+fn default_health_enabled() -> bool {
+    true
+}
+
+fn default_health_address() -> String {
+    "0.0.0.0:8080".to_string()
+}
+
+fn default_health_path() -> String {
+    "/health".to_string()
 }

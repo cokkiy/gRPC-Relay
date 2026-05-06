@@ -15,4 +15,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 config = { workspace = true }
 clap = { workspace = true }
+axum = { workspace = true }
+hyper = { workspace = true }
 relay-proto = { path = "../relay-proto" }
