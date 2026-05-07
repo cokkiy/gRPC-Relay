@@ -211,7 +211,7 @@ The system uses **RBAC + device ownership**:
 The system provides:
 
 - `/health` health check
-- `/metrics` metrics endpoint
+- `/metrics` metrics endpoint (deferred in the current MVP)
 - Structured logging
 - Audit logging
 - OpenTelemetry tracing
@@ -234,7 +234,7 @@ The first release uses a single Relay node, supported by:
 
 - `50051/TCP`: gRPC
 - `50052/UDP`: gRPC over QUIC
-- `8080/TCP`: health checks and metrics
+- `8080/TCP`: health checks (metrics endpoint deferred in the current MVP)
 - `8883/TCP`: MQTT over TLS
 
 ### Configuration
