@@ -1,6 +1,8 @@
 use axum::{routing::get, Json, Router};
 use serde::Serialize;
 use std::{net::SocketAddr, time::Instant};
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 use tracing::info;
 
 use crate::{config::HealthConfig, AppError, Result};
@@ -21,10 +23,37 @@ impl HealthState {
 }
 
 #[derive(Serialize)]
+struct ComponentHealth {
+    status: &'static str,
+    message: &'static str,
+}
+
+#[derive(Serialize)]
+struct HealthMetrics {
+    active_device_connections: u64,
+    active_controller_connections: u64,
+    active_streams: u64,
+    cpu_usage_percent: f64,
+    memory_usage_percent: f64,
+}
+
+#[derive(Serialize)]
 struct HealthResponse {
     status: &'static str,
+    timestamp: String,
     uptime_seconds: u64,
     version: &'static str,
+    components: HealthComponents,
+    metrics: HealthMetrics,
+}
+
+#[derive(Serialize)]
+struct HealthComponents {
+    grpc_server: ComponentHealth,
+    quic_listener: ComponentHealth,
+    mqtt_client: ComponentHealth,
+    auth_service: ComponentHealth,
+    metrics_collector: ComponentHealth,
 }
 
 pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result<()> {
@@ -33,14 +62,13 @@ pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result
         return Ok(());
     }
 
-    let address =
-        config
-            .address
-            .parse::<SocketAddr>()
-            .map_err(|source| AppError::InvalidSocketAddress {
-                address: config.address.clone(),
-                source,
-            })?;
+    let address = config
+        .address
+        .parse::<SocketAddr>()
+        .map_err(|source| AppError::InvalidSocketAddress {
+            address: config.address.clone(),
+            source,
+        })?;
 
     let state = HealthState::new(version);
     let app = Router::new()
@@ -64,9 +92,49 @@ pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result
 async fn health(
     axum::extract::State(state): axum::extract::State<HealthState>,
 ) -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "healthy",
+    // MVP skeleton：目前只有 health 服务本身，其他组件尚未落地。
+    // 为了满足协议契约，这里返回结构完整的 response，并在字段里标明未实现/不可用。
+    let timestamp = OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+
+    let components = HealthComponents {
+        grpc_server: ComponentHealth {
+            status: "unhealthy",
+            message: "gRPC server not implemented (MVP skeleton)",
+        },
+        quic_listener: ComponentHealth {
+            status: "unhealthy",
+            message: "QUIC listener not implemented (MVP skeleton)",
+        },
+        mqtt_client: ComponentHealth {
+            status: "unhealthy",
+            message: "MQTT client not implemented (MVP skeleton)",
+        },
+        auth_service: ComponentHealth {
+            status: "unhealthy",
+            message: "auth service not implemented (MVP skeleton)",
+        },
+        metrics_collector: ComponentHealth {
+            status: "unhealthy",
+            message: "metrics collector not implemented (MVP skeleton)",
+        },
+    };
+
+    let response = HealthResponse {
+        status: "unhealthy",
+        timestamp,
         uptime_seconds: state.started_at.elapsed().as_secs(),
         version: state.version,
-    })
+        components,
+        metrics: HealthMetrics {
+            active_device_connections: 0,
+            active_controller_connections: 0,
+            active_streams: 0,
+            cpu_usage_percent: 0.0,
+            memory_usage_percent: 0.0,
+        },
+    };
+
+    Json(response)
 }

@@ -17,4 +17,5 @@ config = { workspace = true }
 clap = { workspace = true }
 axum = { workspace = true }
 hyper = { workspace = true }
+time = { workspace = true }
 relay-proto = { path = "../relay-proto" }

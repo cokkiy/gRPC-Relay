@@ -23,3 +23,4 @@ config = "0.14"
 clap = { version = "4", features = ["derive"] }
 axum = "0.6"
 hyper = "0.14"
+time = { version = "0.3", features = ["formatting"] }
