@@ -9,7 +9,7 @@ resolver = "2"
 edition = "2021"
 version = "0.1.0"
 license = "MIT"
-authors = ["gPRC-Relay Contributors"]
+authors = ["gRPC-Relay Contributors"]
 
 [workspace.dependencies]
 anyhow = "1"
