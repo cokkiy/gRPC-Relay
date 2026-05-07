@@ -49,3 +49,9 @@ clippy.toml.bk
 
 # Local config
 local.settings.json
+
+# skills
+.skills/
+.sixth/
+.agents/
+skills-lock.json

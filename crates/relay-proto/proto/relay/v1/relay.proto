@@ -1,0 +1,105 @@
+syntax = "proto3";
+
+package relay.v1;
+
+service RelayService {
+  rpc DeviceConnect(stream DeviceMessage) returns (stream RelayMessage);
+  rpc ListOnlineDevices(ListOnlineDevicesRequest) returns (ListOnlineDevicesResponse);
+  rpc ConnectToDevice(stream ControllerMessage) returns (stream DeviceResponse);
+}
+
+message DeviceMessage {
+  string device_id = 1;
+  string token = 2;
+
+  oneof payload {
+    RegisterRequest register = 10;
+    HeartbeatRequest heartbeat = 11;
+    DataResponse data = 12;
+  }
+}
+
+message RegisterRequest {
+  string device_id = 1;
+  map<string, string> metadata = 2;
+  string previous_connection_id = 3;
+}
+
+message HeartbeatRequest {
+  string connection_id = 1;
+  int64 timestamp = 2;
+}
+
+message DataResponse {
+  string connection_id = 1;
+  int64 sequence_number = 2;
+  bytes encrypted_payload = 3;
+  ErrorCode error = 4;
+}
+
+message RelayMessage {
+  oneof payload {
+    RegisterResponse register_response = 10;
+    HeartbeatResponse heartbeat_response = 11;
+    DataRequest data_request = 12;
+  }
+}
+
+message RegisterResponse {
+  string connection_id = 1;
+  bool session_resumed = 2;
+  int64 timestamp = 3;
+}
+
+message HeartbeatResponse {
+  int64 timestamp = 1;
+}
+
+message DataRequest {
+  string connection_id = 1;
+  int64 sequence_number = 2;
+  bytes encrypted_payload = 3;
+}
+
+message ControllerMessage {
+  string controller_id = 1;
+  string token = 2;
+  string target_device_id = 3;
+  string method_name = 4;
+  int64 sequence_number = 5;
+  bytes encrypted_payload = 6;
+}
+
+message DeviceResponse {
+  string device_id = 1;
+  int64 sequence_number = 2;
+  bytes encrypted_payload = 3;
+  ErrorCode error = 4;
+}
+
+message ListOnlineDevicesRequest {
+  string controller_id = 1;
+  string token = 2;
+  string region_filter = 3;
+}
+
+message ListOnlineDevicesResponse {
+  repeated DeviceInfo devices = 1;
+}
+
+message DeviceInfo {
+  string device_id = 1;
+  string connection_id = 2;
+  string relay_address = 3;
+  int64 connected_at = 4;
+  map<string, string> metadata = 5;
+}
+
+enum ErrorCode {
+  OK = 0;
+  DEVICE_OFFLINE = 1;
+  UNAUTHORIZED = 2;
+  DEVICE_NOT_FOUND = 3;
+  RATE_LIMITED = 4;
+  INTERNAL_ERROR = 5;
+}
