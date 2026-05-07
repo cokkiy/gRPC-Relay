@@ -69,22 +69,18 @@ impl HealthComponents {
 }
 
 fn derive_overall_status(components: &HealthComponents) -> &'static str {
-    let statuses = components.statuses();
+    let mut has_degraded = false;
 
-    if statuses
-        .iter()
-        .any(|status| !matches!(*status, "healthy" | "degraded" | "unhealthy"))
-    {
-        return "unhealthy";
+    for status in components.statuses() {
+        match status {
+            "healthy" => {}
+            "degraded" => has_degraded = true,
+            "unhealthy" => return "unhealthy",
+            _ => return "unhealthy",
+        }
     }
 
-    if statuses.iter().any(|status| *status == "unhealthy") {
-        "unhealthy"
-    } else if statuses.iter().any(|status| *status == "degraded") {
-        "degraded"
-    } else {
-        "healthy"
-    }
+    if has_degraded { "degraded" } else { "healthy" }
 }
 
 pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result<()> {
