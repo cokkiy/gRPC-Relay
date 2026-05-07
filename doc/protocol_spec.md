@@ -41,19 +41,32 @@ service RelayService {
 ### 2.2 Message / Field 语义
 
 #### 2.2.1 DeviceConnect（Device ⇄ Relay）
-- `DeviceMessage`（由 Device 发送，使用 `oneof payload`）：
+- `DeviceMessage`（由 Device 发送，包含顶层身份字段 + `oneof payload`）：
+  - 顶层公共字段（来自当前 `relay.proto`）：
+    - `device_id`
+      - `register` 首条消息必填。
+      - `heartbeat` / `data` 消息按当前 proto 继续携带；其值必须与本连接已注册 `device_id` 一致。
+      - 该字段是 `DeviceMessage` 的规范化设备标识，Relay 应以该字段作为流级别身份判断依据。
+    - `token`
+      - `register` 首条消息必填，用于设备鉴权。
+      - `heartbeat` / `data` 消息按当前 proto 可继续携带；若实现侧仅在注册阶段校验，也应要求后续消息与已认证会话一致，不得切换设备身份。
   - `RegisterRequest register`
     - 必填：`device_id`
+      - 由于当前 proto 同时在 `DeviceMessage.device_id` 与 `RegisterRequest.device_id` 中出现该字段，本规范要求两者在 `register` 消息中必须一致。
+      - 若两者不一致，Relay 必须拒绝注册并返回参数错误/鉴权失败，避免不同客户端采用不同优先级策略。
+      - 优先级约定：以顶层 `DeviceMessage.device_id` 为准；`RegisterRequest.device_id` 视为冗余镜像字段，用于向后兼容与业务侧显式表达。
     - 可选：`metadata`（map）
     - 可选（用于会话恢复）：`previous_connection_id`
   - `HeartbeatRequest heartbeat`
     - 必填：`connection_id`
     - `timestamp`：Device 端时间戳（Unix epoch 毫秒/秒以系统约定为准；当前实现与后续统一建议：epoch_millis）
+    - 语义说明：除 `connection_id` 外，消息顶层仍应携带当前连接对应的 `device_id`（以及 proto 中定义的 `token` 字段，如实现未明确省略）。
   - `DataResponse data`
     - `connection_id`：用于路由到正确会话
     - `sequence_number`：请求幂等匹配键
     - `encrypted_payload`：端到端加密的响应字节
     - `error`：Device 处理结果（Relay 原样转发给 Controller）
+    - 语义说明：消息顶层 `device_id` / `token` 如出现，必须与已注册会话保持一致；不得借由后续数据帧变更身份。
 
 - `RelayMessage`（由 Relay 发送，使用 `oneof payload`）：
   - `RegisterResponse register_response`
