@@ -273,7 +273,9 @@ service RelayService {
 - `unhealthy`：关键组件异常（例如 gRPC 服务器无法启动）
 
 > MVP 现阶段仅实现了 health server 本体时，为了契约可用性：
-> - `status` 与各组件 `message` 可标注为 “not implemented / unavailable”，但字段结构必须满足本规范。
+> - `status` 必须仍然使用本规范定义的枚举值：`healthy` / `degraded` / `unhealthy`。
+> - “not implemented / unavailable” 之类的说明应写入顶层或各组件的 `message` 字段，而不是写入 `status`。
+> - 具体应返回哪个 `status`，由各组件当前可用性与影响范围决定，但字段结构必须满足本规范。
 
 ---
 
