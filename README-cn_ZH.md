@@ -211,7 +211,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 系统提供：
 
 - `/health` 健康检查
-- `/metrics` 指标导出
+- `/metrics` 指标导出（当前 MVP 暂缓）
 - 结构化日志
 - 审计日志
 - OpenTelemetry tracing
@@ -234,7 +234,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 
 - `50051/TCP`：gRPC
 - `50052/UDP`：gRPC over QUIC
-- `8080/TCP`：健康检查与指标
+- `8080/TCP`：健康检查（`/metrics` 端点在当前 MVP 暂缓）
 - `8883/TCP`：MQTT over TLS
 
 ### 配置方式

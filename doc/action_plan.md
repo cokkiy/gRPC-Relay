@@ -31,13 +31,19 @@
 ---
 
 ### 2) 协议与接口定义
+**状态**：基本完成（`/metrics` 接口规范暂缓）
+
 **目标**：把需求中的协议契约固化下来，避免后续实现偏离。
 
 **交付物**
-- gRPC proto 文件
-- MQTT topic 与 payload schema 文档
-- 错误码、状态码、元数据规范
-- Health / metrics HTTP 接口规范
+- gRPC proto 文件（已完成）
+- MQTT topic 与 payload schema 文档（已完成）
+- 错误码、状态码、元数据规范（已完成）
+- Health / metrics HTTP 接口规范（Health 已完成，`/metrics` endpoint 当前 MVP 暂不落地）
+
+**备注**
+- 当前契约文档见 `doc/protocol_spec.md`，proto 定义见 `crates/relay-proto/proto/relay/v1/relay.proto`。
+- `/metrics` 仅保留后续实现基线；如未来落地 endpoint，需要同步更新协议文档、代码和验证用例。
 
 **依赖**
 - 基础工程与项目骨架
@@ -259,11 +265,11 @@
 - CI 基础脚本
 
 ### B. 协议层
-- 编写 proto
-- 生成 Rust gRPC 代码
-- 定义 MQTT topics 与 payload schema
-- 定义错误码映射
-- 定义健康检查与 metrics schema
+- 编写 proto（已完成）
+- 生成 Rust gRPC 代码（已完成）
+- 定义 MQTT topics 与 payload schema（已完成）
+- 定义错误码映射（已完成）
+- 定义健康检查与 metrics schema（部分完成：Health 已完成，`/metrics` 暂缓）
 
 ### C. 设备接入
 - QUIC listener
