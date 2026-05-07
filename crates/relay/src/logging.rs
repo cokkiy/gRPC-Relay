@@ -12,5 +12,7 @@ pub fn init(config: &LoggingConfig) {
         tracing::subscriber::set_global_default(builder.finish())
     };
 
-    let _ = result;
+    if let Err(err) = result {
+        eprintln!("failed to initialize global tracing subscriber: {err}");
+    }
 }
