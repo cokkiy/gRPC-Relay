@@ -234,7 +234,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 
 - `50051/TCP`：gRPC
 - `50052/UDP`：gRPC over QUIC
-- `8080/TCP`：健康检查（`/metrics` endpoint 在当前 MVP 暂缓）
+- `8080/TCP`：健康检查（`/metrics` 端点在当前 MVP 暂缓）
 - `8883/TCP`：MQTT over TLS
 
 ### 配置方式
