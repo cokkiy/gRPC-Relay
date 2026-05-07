@@ -56,6 +56,37 @@ struct HealthComponents {
     metrics_collector: ComponentHealth,
 }
 
+impl HealthComponents {
+    fn statuses(&self) -> [&'static str; 5] {
+        [
+            self.grpc_server.status,
+            self.quic_listener.status,
+            self.mqtt_client.status,
+            self.auth_service.status,
+            self.metrics_collector.status,
+        ]
+    }
+}
+
+fn derive_overall_status(components: &HealthComponents) -> &'static str {
+    let statuses = components.statuses();
+
+    if statuses
+        .iter()
+        .any(|status| !matches!(*status, "healthy" | "degraded" | "unhealthy"))
+    {
+        return "unhealthy";
+    }
+
+    if statuses.iter().any(|status| *status == "unhealthy") {
+        "unhealthy"
+    } else if statuses.iter().any(|status| *status == "degraded") {
+        "degraded"
+    } else {
+        "healthy"
+    }
+}
+
 pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result<()> {
     if !config.enabled {
         info!("health server disabled");
@@ -122,7 +153,7 @@ async fn health(
     };
 
     let response = HealthResponse {
-        status: "unhealthy",
+        status: derive_overall_status(&components),
         timestamp,
         uptime_seconds: state.started_at.elapsed().as_secs(),
         version: state.version,
@@ -137,4 +168,57 @@ async fn health(
     };
 
     Json(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{derive_overall_status, ComponentHealth, HealthComponents};
+
+    fn component(status: &'static str) -> ComponentHealth {
+        ComponentHealth {
+            status,
+            message: "test",
+        }
+    }
+
+    fn components(status: &'static str) -> HealthComponents {
+        HealthComponents {
+            grpc_server: component(status),
+            quic_listener: component(status),
+            mqtt_client: component(status),
+            auth_service: component(status),
+            metrics_collector: component(status),
+        }
+    }
+
+    #[test]
+    fn derive_status_is_unhealthy_when_any_component_is_unhealthy() {
+        let mut value = components("healthy");
+        value.mqtt_client = component("unhealthy");
+
+        assert_eq!(derive_overall_status(&value), "unhealthy");
+    }
+
+    #[test]
+    fn derive_status_is_degraded_when_no_component_is_unhealthy() {
+        let mut value = components("healthy");
+        value.auth_service = component("degraded");
+
+        assert_eq!(derive_overall_status(&value), "degraded");
+    }
+
+    #[test]
+    fn derive_status_is_healthy_when_all_components_are_healthy() {
+        let value = components("healthy");
+
+        assert_eq!(derive_overall_status(&value), "healthy");
+    }
+
+    #[test]
+    fn derive_status_treats_unknown_component_status_as_unhealthy() {
+        let mut value = components("healthy");
+        value.grpc_server = component("unknown");
+
+        assert_eq!(derive_overall_status(&value), "unhealthy");
+    }
 }
