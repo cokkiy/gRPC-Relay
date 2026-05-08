@@ -159,8 +159,14 @@ impl ControllerConnectSession {
 
         match tokio::time::timeout(request_timeout, rx).await {
             Ok(Ok(seq_result)) => seq_result,
-            Ok(Err(_recv_error)) => Err(ControllerSdkError::StreamClosed),
-            Err(_) => Err(ControllerSdkError::SequenceResponseNotFound),
+            Ok(Err(_recv_error)) => {
+                self.pending.remove(sequence_number).await;
+                Err(ControllerSdkError::StreamClosed)
+            }
+            Err(_) => {
+                self.pending.remove(sequence_number).await;
+                Err(ControllerSdkError::SequenceResponseNotFound)
+            }
         }
     }
 
