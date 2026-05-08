@@ -55,3 +55,4 @@ local.settings.json
 .sixth/
 .agents/
 skills-lock.json
+.claude/
