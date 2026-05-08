@@ -6,9 +6,12 @@ pub struct RetryBackoff {
 
 impl RetryBackoff {
     pub fn new(initial_seconds: u64, max_seconds: u64) -> Self {
+        let initial_seconds = initial_seconds.max(1);
+        let max_seconds = max_seconds.max(initial_seconds);
+
         Self {
-            initial_seconds: initial_seconds.max(1),
-            max_seconds: max_seconds.max(initial_seconds),
+            initial_seconds,
+            max_seconds,
         }
     }
 
