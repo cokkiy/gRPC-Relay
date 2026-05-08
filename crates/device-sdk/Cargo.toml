@@ -10,22 +10,19 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time"] }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
 
 tonic = { version = "0.11", features = ["transport"] }
-prost = "0.12"
 serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
 config = { workspace = true }
 
 # utils
 async-trait = "0.1"
 bytes = "1"
 tokio-stream = "0.1"
-futures-util = "0.3"
 
 # local
 relay-proto = { path = "../relay-proto" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
