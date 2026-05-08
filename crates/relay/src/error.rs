@@ -25,11 +25,11 @@ pub enum AppError {
     HealthBind {
         address: std::net::SocketAddr,
         #[source]
-        source: hyper::Error,
+        source: std::io::Error,
     },
 
     #[error("health server failed: {0}")]
-    HealthServer(#[from] hyper::Error),
+    HealthServer(#[from] std::io::Error),
 
     #[error("failed to wait for shutdown signal: {0}")]
     ShutdownSignal(#[source] std::io::Error),

@@ -5,6 +5,8 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use tracing::info;
 
+use tokio::net::TcpListener;
+
 use crate::{config::HealthConfig, AppError, Result};
 
 #[derive(Clone)]
@@ -80,7 +82,11 @@ fn derive_overall_status(components: &HealthComponents) -> &'static str {
         }
     }
 
-    if has_degraded { "degraded" } else { "healthy" }
+    if has_degraded {
+        "degraded"
+    } else {
+        "healthy"
+    }
 }
 
 pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result<()> {
@@ -89,13 +95,14 @@ pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result
         return Ok(());
     }
 
-    let address = config
-        .address
-        .parse::<SocketAddr>()
-        .map_err(|source| AppError::InvalidSocketAddress {
-            address: config.address.clone(),
-            source,
-        })?;
+    let address =
+        config
+            .address
+            .parse::<SocketAddr>()
+            .map_err(|source| AppError::InvalidSocketAddress {
+                address: config.address.clone(),
+                source,
+            })?;
 
     let state = HealthState::new(version);
     let app = Router::new()
@@ -108,10 +115,11 @@ pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result
         "health server listening"
     );
 
-    axum::Server::try_bind(&address)
-        .map_err(|source| AppError::HealthBind { address, source })?
-        .serve(app.into_make_service())
-        .await?;
+    let listener = TcpListener::bind(address)
+        .await
+        .map_err(|source| AppError::HealthBind { address, source })?;
+
+    axum::serve(listener, app).await?;
 
     Ok(())
 }

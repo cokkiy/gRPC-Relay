@@ -1,0 +1,20 @@
+relay:
+  tcp_addr: "127.0.0.1:50051"
+  quic_addr: null
+
+device_id: "device-001"
+token: "device-token"
+
+metadata:
+  region: "us-west"
+  device_type: "iot-sensor"
+  firmware_version: "1.0.0"
+
+session_recovery_window_seconds: 300
+heartbeat_interval_seconds: 30
+backoff_initial_seconds: 1
+backoff_max_seconds: 60
+
+transport:
+  max_payload_bytes: 10485760
+  enable_tcp_fallback: true

@@ -51,14 +51,22 @@
 ---
 
 ### 3) 设备侧接入链路
+**状态**：部分完成（已提供 stationService SDK；Relay 侧 DeviceConnect 服务尚未落地）
+
 **目标**：实现 stationService 与 Relay 的长连接、注册、心跳、断线重连、会话恢复。
 
 **交付物**
-- DeviceConnect 流程
-- Register / Heartbeat / Disconnect 逻辑
-- QUIC 连接与 TCP fallback
-- 心跳超时、离线判定、重连退避
-- session / connection_id 管理
+- DeviceConnect 流程：SDK client 已实现；Relay server 尚未实现
+- Register / Heartbeat / Disconnect 逻辑：SDK 已发送 Register/Heartbeat，并在断线后重连；Relay 侧处理尚未实现
+- QUIC 连接与 TCP fallback：SDK 已保留 QUIC 配置并实现 tonic HTTP/2 TCP fallback；QUIC transport 尚未实现
+- 心跳超时、离线判定、重连退避：SDK 已实现重连退避；Relay 心跳超时/离线判定尚未实现
+- session / connection_id 管理：SDK 支持 recovery 窗口内携带 `previous_connection_id`；Relay session registry 尚未实现
+- stationService SDK：见 `crates/device-sdk` 与 `doc/device_sdk.md`
+
+**验收备注**
+- stationService 是外部应用，不包含在本仓库内；本仓库交付其接入 SDK、示例代码和文档。
+- 当前可验证项：`cargo check -p device-sdk --examples`。
+- 端到端验收需要后续实现 Relay 的 `RelayService::DeviceConnect`、session 管理和 stream router。
 
 **依赖**
 - 协议与接口定义
