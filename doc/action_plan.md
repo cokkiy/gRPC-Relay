@@ -76,19 +76,30 @@
 
 ---
 
-### 4) Controller 接入链路
-**目标**：实现 Controller 到 Relay 的认证、在线设备查询、会话建立。
+### 4) Controller 接入链路（外部程序 + Controller SDK）
+**状态**：部分完成（Controller SDK 已交付；Relay 侧 `ListOnlineDevices` / `ConnectToDevice` 尚未落地）
+
+**目标**：打通 Controller（外部程序）到 Relay 的认证、在线设备查询、会话建立，并交付一个可供外部 Controller 程序直接集成的客户端 SDK。
+
+> 说明：Controller 是外部程序，不在本仓库内；当前仓库仅交付其接入 SDK。Relay 服务端仍处于 skeleton（尚未落地 `RelayService::ListOnlineDevices` / `RelayService::ConnectToDevice`），因此本章节在 MVP 阶段以“SDK 可编译、契约对齐、示例可运行（需配套 Relay 落地）”为主要验收标准；端到端联调在 Relay 实现阶段完成。
 
 **交付物**
-- JWT 鉴权
-- ListOnlineDevices RPC
-- ConnectToDevice 流程
-- 设备在线状态查询与过滤
-- Controller 侧错误码处理
+- Controller JWT 鉴权参数注入（SDK 负责携带 `controller_id`、`token`）
+- `ListOnlineDevices`：查询在线设备列表（可选 `region_filter`）
+- `ConnectToDevice`：维护 `ConnectToDevice` 双向流会话，并按 `sequence_number` 匹配 `DeviceResponse`
+- Controller 侧错误处理建议：
+  - `DEVICE_OFFLINE`：等待上线/轮询补偿重试
+  - `UNAUTHORIZED`：刷新 token / 重新登录
+  - `RATE_LIMITED`：指数退避重试
+  - `DEVICE_NOT_FOUND`：检查 device_id
+- SDK crate 交付：`crates/controller-sdk`
+  - 提供 `ControllerClient`、`ControllerConnectSession`
+  - 提供 `examples/simple_controller.rs` 示例（外部程序集成参考）
 
 **依赖**
-- 协议与接口定义
-- 认证与授权基础能力
+- 协议与接口定义（`crates/relay-proto/proto/relay/v1/relay.proto` / `doc/protocol_spec.md`）
+- 认证与授权基础能力（Relay 落地后由服务端完成校验；SDK 先完成参数注入与契约对齐）
+
 
 ---
 

@@ -2,7 +2,7 @@
 members = [
     "crates/relay",
     "crates/relay-proto",
-    "crates/device-sdk",
+    "crates/device-sdk", "crates/controller-sdk",
 ]
 resolver = "2"
 
