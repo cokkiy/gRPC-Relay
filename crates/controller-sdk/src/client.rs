@@ -29,7 +29,7 @@ impl ControllerClient {
         region_filter: Option<&str>,
     ) -> Result<Vec<DeviceInfoExt>> {
         let endpoint = Endpoint::from_shared(self.config.normalized_endpoint()?)
-            .map_err(|e| ControllerSdkError::Transport(e.into()))?;
+            .map_err(ControllerSdkError::Transport)?;
         let channel = endpoint
             .connect()
             .await

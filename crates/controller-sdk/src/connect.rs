@@ -71,7 +71,7 @@ pub struct ControllerConnectSession {
 impl ControllerConnectSession {
     pub async fn connect(opts: ConnectToDeviceOptions) -> Result<Self> {
         let endpoint = Endpoint::from_shared(opts.relay_endpoint.clone())
-            .map_err(|e| ControllerSdkError::Transport(e.into()))?;
+            .map_err(ControllerSdkError::Transport)?;
         let channel = endpoint
             .connect()
             .await
