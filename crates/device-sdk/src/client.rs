@@ -88,7 +88,14 @@ where
         let endpoint = Endpoint::from_shared(normalize_http_uri(&self.config.relay.tcp_addr))
             .map_err(DeviceSdkError::Tonic)?;
         let channel = endpoint.connect().await?;
-        let mut client = RelayServiceClient::new(channel);
+        let max_message_size = self
+            .config
+            .transport
+            .max_payload_bytes
+            .min(usize::MAX as u64) as usize;
+        let mut client = RelayServiceClient::new(channel)
+            .max_decoding_message_size(max_message_size)
+            .max_encoding_message_size(max_message_size);
 
         let device_id = self.config.device_id.clone();
         let token = self.config.token.clone();
