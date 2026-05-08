@@ -28,6 +28,9 @@ pub enum ControllerSdkError {
     #[error("payload too large")]
     PayloadTooLarge,
 
+    #[error("internal error")]
+    InternalError,
+
     #[error("stream closed")]
     StreamClosed,
 

@@ -186,7 +186,7 @@ fn map_device_response_to_sequence_result(device_resp: DeviceResponse) -> Sequen
         Some(ErrorCode::Unauthorized) => Err(ControllerSdkError::Unauthorized),
         Some(ErrorCode::DeviceNotFound) => Err(ControllerSdkError::DeviceNotFound),
         Some(ErrorCode::RateLimited) => Err(ControllerSdkError::RateLimited),
-        Some(ErrorCode::InternalError) => Err(ControllerSdkError::StreamClosed),
+        Some(ErrorCode::InternalError) => Err(ControllerSdkError::InternalError),
         None => Err(ControllerSdkError::StreamClosed),
     };
 
