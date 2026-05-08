@@ -2,6 +2,7 @@
 members = [
     "crates/relay",
     "crates/relay-proto",
+    "crates/device-sdk",
 ]
 resolver = "2"
 
@@ -13,14 +14,14 @@ authors = ["gRPC-Relay Contributors"]
 
 [workspace.dependencies]
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-config = "0.14"
+config = "0.15"
 clap = { version = "4", features = ["derive"] }
-axum = "0.6"
-hyper = "0.14"
+axum = "0.8"
+hyper = "1.9"
 time = { version = "0.3", features = ["formatting"] }
