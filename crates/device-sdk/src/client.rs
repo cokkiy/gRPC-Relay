@@ -60,10 +60,15 @@ where
                     attempt = 0;
                 }
                 Err(DeviceSdkError::ConnectionClosed) | Err(DeviceSdkError::Grpc(_)) => {
-                    attempt = attempt.saturating_add(1);
                     let sleep_seconds = backoff.next_sleep_seconds(attempt);
-                    tracing::warn!(attempt, sleep_seconds, "device connect closed; retrying");
+                    let retry_attempt = attempt.saturating_add(1);
+                    tracing::warn!(
+                        attempt = retry_attempt,
+                        sleep_seconds,
+                        "device connect closed; retrying"
+                    );
 
+                    attempt = retry_attempt;
                     last_disconnect_at_millis = Some(now_epoch_millis());
                     tokio::time::sleep(Duration::from_secs(sleep_seconds)).await;
                 }
