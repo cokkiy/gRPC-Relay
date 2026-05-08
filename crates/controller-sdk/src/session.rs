@@ -19,8 +19,15 @@ impl PendingRequests {
 
     pub async fn insert(&self, sequence_number: i64) -> Result<oneshot::Receiver<SequenceResult>> {
         let (tx, rx) = oneshot::channel::<SequenceResult>();
-        let mut guard = self.inner.lock().await;
-        guard.insert(sequence_number, tx);
+        let previous_tx = {
+            let mut guard = self.inner.lock().await;
+            guard.insert(sequence_number, tx)
+        };
+
+        if let Some(previous_tx) = previous_tx {
+            drop(previous_tx);
+        }
+
         Ok(rx)
     }
 
