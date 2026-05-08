@@ -71,11 +71,11 @@ pub struct ControllerConnectSession {
 impl ControllerConnectSession {
     pub async fn connect(opts: ConnectToDeviceOptions) -> Result<Self> {
         let endpoint = Endpoint::from_shared(opts.relay_endpoint.clone())
-            .map_err(|e| ControllerSdkError::Transport(e.to_string()))?;
+            .map_err(|e| ControllerSdkError::Transport(e.into()))?;
         let channel = endpoint
             .connect()
             .await
-            .map_err(|e| ControllerSdkError::Transport(e.to_string()))?;
+            .map_err(ControllerSdkError::Transport)?;
 
         let mut client = RelayServiceClient::new(channel);
 
@@ -87,7 +87,7 @@ impl ControllerConnectSession {
         let response_stream = client
             .connect_to_device(request)
             .await
-            .map_err(|e| ControllerSdkError::Grpc(e.to_string()))?
+            .map_err(ControllerSdkError::Grpc)?
             .into_inner();
 
         let pending = Arc::new(PendingRequests::new());

@@ -29,15 +29,15 @@ impl ControllerClient {
         region_filter: Option<&str>,
     ) -> Result<Vec<DeviceInfoExt>> {
         let endpoint = Endpoint::from_shared(self.config.normalized_endpoint()?)
-            .map_err(|e| ControllerSdkError::Transport(e.to_string()))?;
+            .map_err(|e| ControllerSdkError::Transport(e.into()))?;
         let channel = endpoint
             .connect()
             .await
-            .map_err(|e| ControllerSdkError::Transport(e.to_string()))?;
+            .map_err(ControllerSdkError::Transport)?;
 
         let mut client = RelayServiceClient::new(channel);
 
-        let token = self.config.token.clone();
+        let token = self.config.token_provider().token()?;
         let region = region_filter.unwrap_or_default().to_string();
 
         // Note: relay-proto ListOnlineDevicesRequest has `region_filter` as string.
@@ -50,7 +50,7 @@ impl ControllerClient {
         let resp = client
             .list_online_devices(Request::new(req))
             .await
-            .map_err(|e| ControllerSdkError::Grpc(e.to_string()))?;
+            .map_err(ControllerSdkError::Grpc)?;
 
         let ListOnlineDevicesResponse { devices } = resp.into_inner();
         Ok(devices.into_iter().map(|d: DeviceInfo| d.into()).collect())
@@ -63,7 +63,7 @@ impl ControllerClient {
         let opts = ConnectToDeviceOptions {
             relay_endpoint: self.config.normalized_endpoint()?,
             controller_id: self.config.controller_id.clone(),
-            token: self.config.token.clone(),
+            token: self.config.token_provider().token()?,
             target_device_id: target_device_id.into(),
             max_payload_bytes: self.config.max_payload_bytes,
             request_timeout: crate::connect::RequestTimeout::default(),

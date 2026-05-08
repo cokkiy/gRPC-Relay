@@ -7,11 +7,11 @@ pub enum ControllerSdkError {
     #[error("invalid config: {0}")]
     InvalidConfig(String),
 
-    #[error("transport error: {0}")]
-    Transport(String),
+    #[error("tonic transport error: {0}")]
+    Transport(#[from] tonic::transport::Error),
 
-    #[error("grpc error: {0}")]
-    Grpc(String),
+    #[error("grpc status: {0}")]
+    Grpc(#[from] tonic::Status),
 
     #[error("unauthorized")]
     Unauthorized,
@@ -36,16 +36,4 @@ pub enum ControllerSdkError {
 
     #[error("sequence number response not found (request timed out)")]
     SequenceResponseNotFound,
-}
-
-impl From<tonic::transport::Error> for ControllerSdkError {
-    fn from(value: tonic::transport::Error) -> Self {
-        ControllerSdkError::Transport(value.to_string())
-    }
-}
-
-impl From<tonic::Status> for ControllerSdkError {
-    fn from(value: tonic::Status) -> Self {
-        ControllerSdkError::Grpc(value.to_string())
-    }
 }
