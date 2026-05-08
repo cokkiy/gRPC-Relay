@@ -10,7 +10,7 @@ use relay_proto::relay::v1::{
     DataResponse, DeviceMessage, ErrorCode, HeartbeatRequest, HeartbeatResponse, RegisterRequest,
     RegisterResponse,
 };
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Semaphore};
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Endpoint;
@@ -56,8 +56,19 @@ where
             {
                 Ok(new_connection_id) => {
                     last_connection_id = Some(new_connection_id);
-                    last_disconnect_at_millis = None;
+                    last_disconnect_at_millis = Some(now_epoch_millis());
                     attempt = 0;
+
+                    let sleep_seconds = backoff.next_sleep_seconds(attempt);
+                    let retry_attempt = attempt.saturating_add(1);
+                    tracing::warn!(
+                        attempt = retry_attempt,
+                        sleep_seconds,
+                        "device connect closed after registration; retrying"
+                    );
+
+                    attempt = retry_attempt;
+                    tokio::time::sleep(Duration::from_secs(sleep_seconds)).await;
                 }
                 Err(DeviceSdkError::ConnectionClosed) | Err(DeviceSdkError::Grpc(_)) => {
                     let sleep_seconds = backoff.next_sleep_seconds(attempt);
@@ -88,11 +99,7 @@ where
         let endpoint = Endpoint::from_shared(normalize_http_uri(&self.config.relay.tcp_addr))
             .map_err(DeviceSdkError::Tonic)?;
         let channel = endpoint.connect().await?;
-        let max_message_size = self
-            .config
-            .transport
-            .max_payload_bytes
-            .min(usize::MAX as u64) as usize;
+        let max_message_size = self.config.transport.max_payload_bytes;
         let mut client = RelayServiceClient::new(channel)
             .max_decoding_message_size(max_message_size)
             .max_encoding_message_size(max_message_size);
@@ -145,8 +152,22 @@ where
 
         // start heartbeat after first RegisterResponse (connection_id becomes known)
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
+        let mut registered_connection_id: Option<String> = None;
+        let data_handler_limit = std::sync::Arc::new(Semaphore::new(64));
 
-        while let Some(relay_msg) = response_stream.message().await? {
+        loop {
+            let relay_msg = match response_stream.message().await {
+                Ok(Some(msg)) => msg,
+                Ok(None) => break,
+                Err(status) => {
+                    if registered_connection_id.is_some() {
+                        tracing::warn!(error = ?status, "response stream closed after registration");
+                        break;
+                    }
+                    return Err(DeviceSdkError::Grpc(status));
+                }
+            };
+
             match relay_msg.payload {
                 Some(relay_message::Payload::RegisterResponse(RegisterResponse {
                     connection_id,
@@ -158,6 +179,8 @@ where
                         connection_id=%connection_id,
                         "registered (and possibly resumed)"
                     );
+
+                    registered_connection_id = Some(connection_id.clone());
 
                     if heartbeat_task.is_none() {
                         let hb_tx = tx.clone();
@@ -240,8 +263,14 @@ where
                     let handler = self.handler.clone();
                     let tx_for_response = tx.clone();
                     let token_for_response = token.clone();
+                    let permit = data_handler_limit
+                        .clone()
+                        .acquire_owned()
+                        .await
+                        .map_err(|_| DeviceSdkError::ConnectionClosed)?;
 
                     tokio::spawn(async move {
+                        let _permit = permit;
                         let encrypted_payload_bytes = Bytes::from(encrypted_payload);
 
                         let handler_result: anyhow::Result<EncryptedPayload> = handler
@@ -279,6 +308,10 @@ where
 
         if let Some(handle) = heartbeat_task {
             handle.abort();
+        }
+
+        if let Some(connection_id) = registered_connection_id {
+            return Ok(connection_id);
         }
 
         Err(DeviceSdkError::ConnectionClosed)
