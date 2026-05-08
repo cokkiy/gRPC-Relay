@@ -176,15 +176,16 @@ impl ControllerConnectSession {
 }
 
 fn map_device_response_to_sequence_result(device_resp: DeviceResponse) -> SequenceResult {
-    let err_code = device_resp.error;
+    let err_code = ErrorCode::from_i32(device_resp.error);
 
     let result = match err_code {
-        x if x == ErrorCode::Ok as i32 => Ok(Bytes::from(device_resp.encrypted_payload)),
-        x if x == ErrorCode::DeviceOffline as i32 => Err(ControllerSdkError::DeviceOffline),
-        x if x == ErrorCode::Unauthorized as i32 => Err(ControllerSdkError::Unauthorized),
-        x if x == ErrorCode::DeviceNotFound as i32 => Err(ControllerSdkError::DeviceNotFound),
-        x if x == ErrorCode::RateLimited as i32 => Err(ControllerSdkError::RateLimited),
-        _ => Err(ControllerSdkError::DeviceOffline),
+        Some(ErrorCode::Ok) => Ok(Bytes::from(device_resp.encrypted_payload)),
+        Some(ErrorCode::DeviceOffline) => Err(ControllerSdkError::DeviceOffline),
+        Some(ErrorCode::Unauthorized) => Err(ControllerSdkError::Unauthorized),
+        Some(ErrorCode::DeviceNotFound) => Err(ControllerSdkError::DeviceNotFound),
+        Some(ErrorCode::RateLimited) => Err(ControllerSdkError::RateLimited),
+        Some(ErrorCode::InternalError) => Err(ControllerSdkError::StreamClosed),
+        None => Err(ControllerSdkError::StreamClosed),
     };
 
     result
