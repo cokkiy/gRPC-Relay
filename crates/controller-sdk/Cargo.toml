@@ -1,0 +1,31 @@
+[package]
+name = "controller-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "signal"] }
+tracing = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+config = { workspace = true }
+
+tonic = { version = "0.11", features = ["transport"] }
+bytes = "1"
+async-trait = "0.1"
+tokio-stream = "0.1"
+
+relay-proto = { path = "../relay-proto" }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tracing-subscriber = { workspace = true, features = ["env-filter", "fmt", "json"] }
+
+[features]
+default = []
