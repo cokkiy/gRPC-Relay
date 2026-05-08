@@ -60,6 +60,7 @@ pub struct ControllerConnectSession {
     target_device_id: String,
     controller_id: String,
     token: String,
+    max_payload_bytes: usize,
 
     pending: Arc<PendingRequests>,
 
@@ -122,6 +123,7 @@ impl ControllerConnectSession {
             target_device_id: opts.target_device_id,
             controller_id: opts.controller_id,
             token: opts.token,
+            max_payload_bytes: opts.max_payload_bytes,
             pending,
             outbound_tx: Mutex::new(tx),
         })
@@ -134,8 +136,8 @@ impl ControllerConnectSession {
         encrypted_payload: RequestPayload,
         request_timeout: std::time::Duration,
     ) -> Result<Bytes> {
-        if encrypted_payload.is_empty() {
-            // Allow empty payload; don't reject.
+        if self.max_payload_bytes > 0 && encrypted_payload.len() > self.max_payload_bytes {
+            return Err(ControllerSdkError::PayloadTooLarge);
         }
 
         let rx = self.pending.insert(sequence_number).await?;
@@ -176,7 +178,7 @@ impl ControllerConnectSession {
 }
 
 fn map_device_response_to_sequence_result(device_resp: DeviceResponse) -> SequenceResult {
-    let err_code = ErrorCode::from_i32(device_resp.error);
+    let err_code = ErrorCode::try_from(device_resp.error).ok();
 
     let result = match err_code {
         Some(ErrorCode::Ok) => Ok(Bytes::from(device_resp.encrypted_payload)),

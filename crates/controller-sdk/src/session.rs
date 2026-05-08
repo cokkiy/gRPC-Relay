@@ -31,6 +31,11 @@ impl PendingRequests {
         Ok(rx)
     }
 
+    pub async fn remove(&self, sequence_number: i64) {
+        let mut guard = self.inner.lock().await;
+        guard.remove(&sequence_number);
+    }
+
     pub async fn complete(&self, sequence_number: i64, result: SequenceResult) {
         let maybe_tx = {
             let mut guard = self.inner.lock().await;
