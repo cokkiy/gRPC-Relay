@@ -18,6 +18,8 @@ use tonic::Request;
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+const MAX_CONCURRENT_DATA_HANDLERS: usize = 64;
+
 #[derive(Debug, Clone)]
 pub struct DeviceConnectClient<H> {
     config: DeviceSdkConfig,
@@ -50,43 +52,36 @@ where
         let mut attempt: u32 = 0;
 
         loop {
-            match self
+            let should_retry = match self
                 .connect_once(last_connection_id.clone(), last_disconnect_at_millis)
                 .await
             {
                 Ok(new_connection_id) => {
                     last_connection_id = Some(new_connection_id);
-                    last_disconnect_at_millis = Some(now_epoch_millis());
                     attempt = 0;
-
-                    let sleep_seconds = backoff.next_sleep_seconds(attempt);
-                    let retry_attempt = attempt.saturating_add(1);
-                    tracing::warn!(
-                        attempt = retry_attempt,
-                        sleep_seconds,
-                        "device connect closed after registration; retrying"
-                    );
-
-                    attempt = retry_attempt;
-                    tokio::time::sleep(Duration::from_secs(sleep_seconds)).await;
+                    true
                 }
                 Err(DeviceSdkError::ConnectionClosed) | Err(DeviceSdkError::Grpc(_)) => {
-                    let sleep_seconds = backoff.next_sleep_seconds(attempt);
-                    let retry_attempt = attempt.saturating_add(1);
-                    tracing::warn!(
-                        attempt = retry_attempt,
-                        sleep_seconds,
-                        "device connect closed; retrying"
-                    );
-
-                    attempt = retry_attempt;
-                    last_disconnect_at_millis = Some(now_epoch_millis());
-                    tokio::time::sleep(Duration::from_secs(sleep_seconds)).await;
+                    true
                 }
                 Err(err) => {
                     tracing::error!(error=?err, "fatal error in device connect client; stop");
                     return Err(err);
                 }
+            };
+
+            if should_retry {
+                let sleep_seconds = backoff.next_sleep_seconds(attempt);
+                let retry_attempt = attempt.saturating_add(1);
+                tracing::warn!(
+                    attempt = retry_attempt,
+                    sleep_seconds,
+                    "device connect closed; retrying"
+                );
+
+                attempt = retry_attempt;
+                last_disconnect_at_millis = Some(now_epoch_millis());
+                tokio::time::sleep(Duration::from_secs(sleep_seconds)).await;
             }
         }
     }
@@ -153,7 +148,8 @@ where
         // start heartbeat after first RegisterResponse (connection_id becomes known)
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
         let mut registered_connection_id: Option<String> = None;
-        let data_handler_limit = std::sync::Arc::new(Semaphore::new(64));
+        let data_handler_limit =
+            std::sync::Arc::new(Semaphore::new(MAX_CONCURRENT_DATA_HANDLERS));
 
         loop {
             let relay_msg = match response_stream.message().await {
