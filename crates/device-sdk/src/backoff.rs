@@ -18,8 +18,8 @@ impl RetryBackoff {
     /// 指数退避 + 抖动（jitter），不依赖随机数库
     ///
     /// 行为：
-    /// - 第一次返回 initial
-    /// - 每次翻倍，最大不超过 max_seconds
+    /// - 基础退避值从 initial 开始，之后每次翻倍，最大不超过 max_seconds
+    /// - 返回值（包括第一次）都会应用 jitter
     /// - jitter：在 [0.5x, 1.5x] 范围内扰动（通过 attempt 的确定性 hash 产生扰动）
     pub fn next_sleep_seconds(&self, attempt: u32) -> u64 {
         let base = self
