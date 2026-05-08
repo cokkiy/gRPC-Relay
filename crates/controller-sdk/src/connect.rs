@@ -151,10 +151,10 @@ impl ControllerConnectSession {
 
         {
             let tx_guard = self.outbound_tx.lock().await;
-            tx_guard
-                .send(msg)
-                .await
-                .map_err(|_| ControllerSdkError::StreamClosed)?;
+            if tx_guard.send(msg).await.is_err() {
+                self.pending.remove(sequence_number).await;
+                return Err(ControllerSdkError::StreamClosed);
+            }
         }
 
         match tokio::time::timeout(request_timeout, rx).await {
