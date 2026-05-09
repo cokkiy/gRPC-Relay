@@ -63,10 +63,10 @@ pub fn validate_method_name(name: &str) -> Result<(), ValidationError> {
             message: "method_name must not be empty".into(),
         });
     }
-    // Allow alphanumeric, underscores, dots, slashes (gRPC fully-qualified names)
+    // Allow ASCII alphanumeric, underscores, dots, slashes (gRPC fully-qualified names)
     let allowed = name
         .chars()
-        .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '/');
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.' || c == '/');
     if !allowed {
         return Err(ValidationError {
             code: ErrorCode::InternalError,
