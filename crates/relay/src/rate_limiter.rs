@@ -197,7 +197,7 @@ pub struct BandwidthTracker {
     controller_limit: u64,
     global_limit: u64,
     // (bytes_in_window, window_start_ns)
-    windows: Arc<DashMap<String, (AtomicU64, AtomicU64)>>,
+    windows: Arc<DashMap<String, (u64, u64)>>,
 }
 
 impl BandwidthTracker {
@@ -226,26 +226,19 @@ impl BandwidthTracker {
     fn record_key(&self, key: &str, bytes: u64, limit: u64) -> bool {
         let now_ns = Self::now_ns();
 
-        let entry = self
+        let mut entry = self
             .windows
             .entry(key.to_string())
-            .or_insert_with(|| (AtomicU64::new(0), AtomicU64::new(now_ns)));
+            .or_insert_with(|| (0, now_ns));
 
-        let window_start = entry.1.load(Ordering::Relaxed);
-
-        // Rotate window if >= 1 second elapsed
-        if now_ns.saturating_sub(window_start) >= 1_000_000_000 {
-            if let Ok(_) = entry.1.compare_exchange(
-                window_start,
-                now_ns,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) {
-                entry.0.store(0, Ordering::Relaxed);
-            }
+        // Rotate window if >= 1 second elapsed.
+        if now_ns.saturating_sub(entry.1) >= 1_000_000_000 {
+            entry.1 = now_ns;
+            entry.0 = 0;
         }
 
-        let new_total = entry.0.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        let new_total = entry.0.saturating_add(bytes);
+        entry.0 = new_total;
         new_total <= limit
     }
 
@@ -437,5 +430,22 @@ mod tests {
         let bt = BandwidthTracker::new(&config);
         assert!(bt.record_and_check("dev-1", "ctrl-1", 50));
         assert!(!bt.record_and_check("dev-2", "ctrl-2", 60));
+    }
+
+    #[test]
+    fn bandwidth_tracker_rotates_window_before_counting_new_bytes() {
+        let config = RateLimitConfig {
+            device_bandwidth_bytes_per_sec: 100,
+            controller_bandwidth_bytes_per_sec: 100_000_000,
+            global_bandwidth_bytes_per_sec: 100_000_000,
+            ..test_config()
+        };
+        let bt = BandwidthTracker::new(&config);
+
+        let stale_ns = BandwidthTracker::now_ns().saturating_sub(2_000_000_000);
+        bt.windows.insert("device:dev-1".to_string(), (90, stale_ns));
+
+        assert!(bt.record_key("device:dev-1", 20, 100));
+        assert_eq!(bt.windows.get("device:dev-1").unwrap().0, 20);
     }
 }
