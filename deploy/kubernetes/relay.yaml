@@ -24,8 +24,8 @@ data:
         enabled: true
         jwt:
           enabled: true
-          # Inject from a Kubernetes Secret or external secret manager at runtime.
-          hs256_secret: "${RELAY_JWT_HS256_SECRET}"
+          # Supply the JWT secret via the container environment variable
+          # RELAY__AUTH__JWT__HS256_SECRET (for example from a Kubernetes Secret).
           issuer: "grpc-relay"
           audience: "grpc-relay-controller"
         controller_tokens:
