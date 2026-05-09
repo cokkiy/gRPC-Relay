@@ -237,7 +237,9 @@ impl BandwidthTracker {
             entry.0 = 0;
         }
 
-        let new_total = entry.0.saturating_add(bytes);
+        let Some(new_total) = entry.0.checked_add(bytes) else {
+            return false;
+        };
         entry.0 = new_total;
         new_total <= limit
     }
