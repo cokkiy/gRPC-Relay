@@ -131,6 +131,7 @@ Core services include:
 - `DeviceConnect(stream DeviceMessage) returns (stream RelayMessage)`
 - `ListOnlineDevices(ListOnlineDevicesRequest) returns (ListOnlineDevicesResponse)`
 - `ConnectToDevice(stream ControllerMessage) returns (stream DeviceResponse)`
+- `RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse)`
 
 ### Key Messages
 
@@ -139,6 +140,7 @@ Core services include:
 - `ControllerMessage`: request from controller to device
 - `DeviceResponse`: response from device
 - `ListOnlineDevicesRequest/Response`: online device query
+- `RevokeTokenRequest/Response`: admin token revocation
 
 ### MQTT Topics
 
@@ -166,7 +168,7 @@ Core services include:
 ### Authentication
 
 - **Device**: mTLS device certificates are recommended, with pre-provisioned tokens as an alternative
-- **Controller**: JWT token authentication
+- **Controller**: HS256 JWT token authentication with `controller_id`, `role`, allowed projects, expiry, issuer, and audience claims
 
 ### Authorization
 
@@ -183,6 +185,7 @@ The system uses **RBAC + device ownership**:
 - Relay must not log encrypted payload contents
 - Rate limiting must apply at device, Controller, and global levels
 - Metadata such as `device_id`, `controller_id`, and `method_name` must be validated
+- Admin Controllers can revoke Controller or Device tokens through the gRPC `RevokeToken` API; the current MVP/P1 implementation keeps revocations in Relay memory
 
 ---
 
@@ -211,7 +214,8 @@ The system uses **RBAC + device ownership**:
 The system provides:
 
 - `/health` health check
-- `/metrics` metrics endpoint (deferred in the current MVP)
+- `/metrics/security` security metrics endpoint
+- Full Prometheus `/metrics` endpoint (deferred beyond the current MVP/P1)
 - Structured logging
 - Audit logging
 - OpenTelemetry tracing
@@ -234,7 +238,7 @@ The first release uses a single Relay node, supported by:
 
 - `50051/TCP`: gRPC
 - `50052/UDP`: gRPC over QUIC
-- `8080/TCP`: health checks (metrics endpoint deferred in the current MVP)
+- `8080/TCP`: health checks and `/metrics/security`
 - `8883/TCP`: MQTT over TLS
 
 ### Configuration
@@ -245,6 +249,7 @@ YAML configuration files are supported, including:
 - Heartbeat and timeout settings
 - Rate limiting settings
 - TLS settings
+- Controller JWT settings
 - MQTT settings
 - Session recovery settings
 - Observability settings
@@ -256,6 +261,7 @@ YAML configuration files are supported, including:
 - Rolling updates
 - Log inspection
 - Metrics inspection
+- Token revocation through the Controller SDK `revoke_token(...)`
 - Troubleshooting
 - Certificate rotation
 - Token revocation

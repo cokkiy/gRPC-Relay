@@ -131,6 +131,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 - `DeviceConnect(stream DeviceMessage) returns (stream RelayMessage)`
 - `ListOnlineDevices(ListOnlineDevicesRequest) returns (ListOnlineDevicesResponse)`
 - `ConnectToDevice(stream ControllerMessage) returns (stream DeviceResponse)`
+- `RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse)`
 
 ### 关键消息
 
@@ -139,6 +140,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 - `ControllerMessage`：控制端发往设备的请求
 - `DeviceResponse`：设备返回的响应
 - `ListOnlineDevicesRequest/Response`：在线设备查询
+- `RevokeTokenRequest/Response`：管理员 Token 撤销
 
 ### MQTT Topics
 
@@ -166,7 +168,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 ### 认证
 
 - **Device**：推荐使用 mTLS 设备证书，也支持预置 Token
-- **Controller**：使用 JWT Token
+- **Controller**：使用 HS256 JWT Token，包含 `controller_id`、角色、授权项目、过期时间、issuer 和 audience claims
 
 ### 授权
 
@@ -183,6 +185,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 - Relay 不得记录加密 payload 内容
 - 限流策略按设备、Controller 和全局维度控制
 - 需要验证 `device_id`、`controller_id`、`method_name` 等元数据
+- admin Controller 可通过 gRPC `RevokeToken` 接口撤销 Controller 或 Device token；当前 MVP/P1 实现使用 Relay 进程内存保存撤销状态
 
 ---
 
@@ -211,7 +214,8 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 系统提供：
 
 - `/health` 健康检查
-- `/metrics` 指标导出（当前 MVP 暂缓）
+- `/metrics/security` 安全指标接口
+- 完整 Prometheus `/metrics` 指标导出（当前 MVP/P1 后续再补）
 - 结构化日志
 - 审计日志
 - OpenTelemetry tracing
@@ -234,7 +238,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 
 - `50051/TCP`：gRPC
 - `50052/UDP`：gRPC over QUIC
-- `8080/TCP`：健康检查（`/metrics` 端点在当前 MVP 暂缓）
+- `8080/TCP`：健康检查与 `/metrics/security`
 - `8883/TCP`：MQTT over TLS
 
 ### 配置方式
@@ -245,6 +249,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 - 心跳与超时配置
 - 限流配置
 - TLS 配置
+- Controller JWT 配置
 - MQTT 配置
 - 会话恢复配置
 - 观测性配置
@@ -256,6 +261,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 - 滚动更新
 - 查看日志
 - 查看指标
+- 通过 Controller SDK `revoke_token(...)` 撤销 Token
 - 故障排查
 - 证书轮换
 - Token 撤销

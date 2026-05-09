@@ -121,21 +121,94 @@
 
 ---
 
-### 6) 认证、授权与安全
-**目标**：把系统的安全边界建立起来，满足需求中的控制中继模式。
+### 6) 认证、授权与安全（实施行动计划）
+**状态**：完成（MVP 6.1 + P1 安全增强已落地；多 Relay 撤销一致性仍属 6.3 后续项）
 
-**交付物**
-- Device 认证：mTLS / Token
-- Controller 认证：JWT
-- RBAC 授权模型
-- device_id / controller_id / method_name 校验
-- E2E payload 透明转发，不解密内容
-- 黑名单 / token revocation 支持的接口预留
+**目标**：建立系统安全边界（可控中继模式），确保 Relay 能完成认证/授权/审计/限流与 anti-replay，但**不解密**业务 payload。
 
-**依赖**
-- 协议定义
-- 基础工程
-- Controller / Device 接入链路
+---
+
+#### 6.1 MVP 必达安全能力（Week 6 验收主线）
+
+1. **传输层加密（TLS 1.3）**
+- Device ↔ Relay：QUIC 内置 TLS 1.3
+- Controller ↔ Relay：HTTP/2 + TLS 1.3
+
+2. **端到端 payload 透明转发**
+- Relay 仅转发 `encrypted_payload` 字节：不解密、不重加密、不做内容级审计
+- 授权/审计/幂等只依赖元数据（`device_id/controller_id/method_name/sequence_number/timestamp` 等）
+
+3. **认证（Authentication）**
+- Device 侧：mTLS / Token（二选一或兼容并行，MVP 至少实现一种）
+- Controller 侧：JWT
+- 认证失败返回语义：
+  - `ListOnlineDevices`：使用 gRPC Status（`UNAUTHENTICATED`）
+  - `ConnectToDevice`：流内返回 `DeviceResponse.error = UNAUTHORIZED`
+
+4. **授权（Authorization：RBAC + 设备归属）**
+- RBAC 角色：`admin / operator / viewer`
+- 设备归属：`device_id -> project_id/tenant_id`
+- 方法白名单：`method_name` 不在允许列表拒绝
+- 授权检查时机（MVP 建议）：在“连接/流映射创建时检查一次”，避免每条消息重复开销
+- 授权拒绝返回语义：
+  - `ListOnlineDevices`：`PERMISSION_DENIED`
+  - `ConnectToDevice`：`DeviceResponse.error = UNAUTHORIZED`
+  - 审计事件：`authorization_denied`
+
+5. **输入验证与安全约束**
+- 必填性校验：ControllerMessage 的 `controller_id/token/target_device_id/method_name/sequence_number/encrypted_payload`
+- 身份字段格式校验：`device_id/controller_id` 长度与字符集等
+- payload 大小限制：`encrypted_payload < 10MB`
+- 透明转发安全回归点：Relay 代码不得读取/解密 payload 内容
+
+6. **anti-replay / 幂等（sequence_number）**
+- 使用 `sequence_number` 做幂等：LRU/TTL（最近 10K，过期 1 小时）
+- 重复请求：返回缓存响应，不重复转发到 Device
+- 安全意义：基础重放防护 + 传输重试幂等
+
+7. **限流（基础 DDoS 防护，应用层）**
+- 限流位置：认证/授权通过之后、转发之前
+- per-device：100 req/s
+- per-controller：1000 req/s
+- global：100,000 req/s
+- 返回语义：
+  - `ConnectToDevice`：`DeviceResponse.error = RATE_LIMITED`
+  - `ListOnlineDevices`：gRPC Status `RESOURCE_EXHAUSTED`
+- 审计事件：`rate_limit`（token 脱敏）
+
+8. **审计日志与 tracing（可追溯、可脱敏）**
+- MVP 审计事件落地（至少）：
+  - `auth_failure / auth_success`
+  - `authorization_denied`
+  - `controller_request`
+  - `rate_limit`
+- 脱敏规则：
+  - 不记录 `encrypted_payload` 明文
+  - token 只记录摘要/前 8 位
+- tracing 主链路（至少一个关键链路）：
+  - `controller_request_to_device`：auth_verify / permission_check / relay_forward / relay_response
+
+---
+
+#### 6.2 P1（Week 9）安全增强（首版必须补齐）
+- token revocation 生效增强：撤销后可在可接受延迟内拒绝
+- 安全观测性增强：
+  - 认证失败率、授权拒绝率、限流命中率可检索/可度量
+- 安全测试用例覆盖：
+  - 未授权访问 / 伪造 token / 跨设备访问 / 重放（sequence_number）/ 超大 payload / 限流触发
+
+**落地说明**
+- Controller 认证使用 HS256 JWT；Device 认证使用 token。
+- TLS 通过 `relay.tls` PEM 文件路径配置接入 tonic gRPC server。
+- token revocation 通过 `RevokeToken` gRPC RPC 下发，仅 admin JWT 可调用；当前为单 Relay 内存生效。
+- 安全指标通过 `/metrics/security` JSON endpoint 暴露。
+
+---
+
+#### 6.3 P2（后续版本）可选增强
+- 更细粒度 ABAC（如需要）
+- 更强 DDoS/连接级防护策略（应用层 + 边缘配合）
+- 多 Relay 下的权限/撤销一致性改进
 
 ---
 
