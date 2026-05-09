@@ -59,7 +59,7 @@ impl InFlight {
 pub struct RelayState {
     pub sessions_by_device_id: DashMap<String, DeviceSession>,
     pub connection_to_device_id: DashMap<String, String>,
-    pub inflight_by_sequence: DashMap<i64, std::sync::Arc<InFlight>>,
+    pub inflight_by_sequence: DashMap<(String, i64), std::sync::Arc<InFlight>>,
     connection_id_counter: AtomicU64,
 }
 
@@ -107,7 +107,9 @@ impl RelayState {
     ) -> (oneshot::Receiver<DeviceResponse>, bool) {
         use dashmap::mapref::entry::Entry;
 
-        match self.inflight_by_sequence.entry(sequence_number) {
+        let key = (device_id.to_string(), sequence_number);
+
+        match self.inflight_by_sequence.entry(key) {
             Entry::Occupied(o) => {
                 let inflight = o.get();
                 let (tx, rx) = oneshot::channel::<DeviceResponse>();
@@ -124,9 +126,13 @@ impl RelayState {
         }
     }
 
-    pub fn take_inflight(&self, sequence_number: i64) -> Option<std::sync::Arc<InFlight>> {
+    pub fn take_inflight(
+        &self,
+        device_id: &str,
+        sequence_number: i64,
+    ) -> Option<std::sync::Arc<InFlight>> {
         self.inflight_by_sequence
-            .remove(&sequence_number)
+            .remove(&(device_id.to_string(), sequence_number))
             .map(|(_, v)| v)
     }
 
@@ -149,20 +155,23 @@ impl RelayState {
         &self,
         device_id: &str,
     ) -> Vec<(i64, std::sync::Arc<InFlight>)> {
-        let seqs: Vec<i64> = self
+        let keys: Vec<(String, i64)> = self
             .inflight_by_sequence
             .iter()
             .filter_map(|entry| {
                 if entry.value().device_id() == device_id {
-                    Some(*entry.key())
+                    Some(entry.key().clone())
                 } else {
                     None
                 }
             })
             .collect();
 
-        seqs.into_iter()
-            .filter_map(|seq| self.take_inflight(seq).map(|inflight| (seq, inflight)))
+        keys.into_iter()
+            .filter_map(|(device_id, seq)| {
+                self.take_inflight(&device_id, seq)
+                    .map(|inflight| (seq, inflight))
+            })
             .collect()
     }
 }

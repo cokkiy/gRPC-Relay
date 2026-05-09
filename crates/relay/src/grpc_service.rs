@@ -3,8 +3,8 @@ use crate::idempotency::IdempotencyCache;
 use crate::rate_limiter::RateLimiter;
 use crate::session::SessionRegistry;
 use crate::state::{
-    device_response_from_device_data, relay_message_data_request,
-    relay_message_heartbeat_response, relay_message_register_response, RelayState,
+    device_response_from_device_data, relay_message_data_request, relay_message_heartbeat_response,
+    relay_message_register_response, RelayState,
 };
 use crate::stream::{StreamRouter, StreamRouterErrorKind};
 use crate::validator;
@@ -17,9 +17,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::Stream;
 use tokio_stream::StreamExt;
-use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::info;
 
@@ -93,6 +93,12 @@ impl RelayGrpcService {
                     current_device_id = Some(dev_id.clone());
 
                     let connection_id = state.next_connection_id();
+                    let previous_connection_id = register_req.previous_connection_id.clone();
+                    let session_resumed = !previous_connection_id.is_empty()
+                        && state
+                            .device_id_for_connection(&previous_connection_id)
+                            .as_deref()
+                            == Some(dev_id.as_str());
 
                     let session = crate::state::DeviceSession {
                         device_id: dev_id.clone(),
@@ -101,7 +107,13 @@ impl RelayGrpcService {
                         outbound_tx: out_tx.clone(),
                     };
 
-                    state.sessions_by_device_id.insert(dev_id.clone(), session);
+                    if let Some(previous_session) =
+                        state.sessions_by_device_id.insert(dev_id.clone(), session)
+                    {
+                        state
+                            .connection_to_device_id
+                            .remove(&previous_session.connection_id);
+                    }
                     state
                         .connection_to_device_id
                         .insert(connection_id.clone(), dev_id.clone());
@@ -113,7 +125,7 @@ impl RelayGrpcService {
                         "device registered"
                     );
 
-                    let resp = relay_message_register_response(connection_id, true);
+                    let resp = relay_message_register_response(connection_id, session_resumed);
                     let _ = out_tx.send(Ok(resp)).await;
                 }
                 Some(device_message::Payload::Heartbeat(_hb)) => {
@@ -121,12 +133,14 @@ impl RelayGrpcService {
                     let _ = out_tx.send(Ok(resp)).await;
                 }
                 Some(device_message::Payload::Data(data_resp)) => {
-                    if let Some(inflight) = state.take_inflight(data_resp.sequence_number) {
-                        let response_device_id = session_registry
-                            .get_device_session(&dev_id)
-                            .map(|session| session.device_id)
-                            .or_else(|| state.device_id_for_connection(&data_resp.connection_id))
-                            .unwrap_or(dev_id.clone());
+                    let response_device_id = session_registry
+                        .get_device_session(&dev_id)
+                        .map(|session| session.device_id)
+                        .or_else(|| state.device_id_for_connection(&data_resp.connection_id))
+                        .unwrap_or(dev_id.clone());
+                    if let Some(inflight) =
+                        state.take_inflight(&response_device_id, data_resp.sequence_number)
+                    {
                         let resp = device_response_from_device_data(
                             response_device_id,
                             data_resp.sequence_number,
@@ -142,7 +156,6 @@ impl RelayGrpcService {
 
         if let Some(ref did) = current_device_id {
             let inflight = state.take_inflight_for_device(did);
-            let had_inflight = !inflight.is_empty();
             let removed = stream_router.remove_all_for_device(did);
 
             for (seq, inflight_entry) in inflight {
@@ -151,8 +164,8 @@ impl RelayGrpcService {
                     .await;
             }
 
-            if !had_inflight {
-                for mapping in removed {
+            for mapping in removed {
+                if mapping.active_requests == 0 {
                     let _ = mapping
                         .controller_tx
                         .send(Ok(error_resp(did, 0, ErrorCode::DeviceOffline)))
@@ -177,6 +190,7 @@ impl RelayGrpcService {
         S: Stream<Item = Result<ControllerMessage, Status>> + Unpin,
     {
         let mut stream_id: Option<String> = None;
+        let mut stream_binding: Option<(String, String, String)> = None;
 
         while let Some(next_message) = inbound.next().await {
             let Ok(msg) = next_message else {
@@ -209,11 +223,15 @@ impl RelayGrpcService {
                     out_tx.clone(),
                 ) {
                     Ok(sid) => {
+                        stream_binding = Some((
+                            msg.target_device_id.clone(),
+                            msg.controller_id.clone(),
+                            msg.method_name.clone(),
+                        ));
                         stream_id = Some(sid);
                     }
                     Err(e) if e.kind == StreamRouterErrorKind::MaxStreamsExceeded => {
-                        send_error_response(&out_tx, device_id, seq, ErrorCode::RateLimited)
-                            .await;
+                        send_error_response(&out_tx, device_id, seq, ErrorCode::RateLimited).await;
                         continue;
                     }
                     Err(_) => {
@@ -222,11 +240,24 @@ impl RelayGrpcService {
                         continue;
                     }
                 }
+            } else if stream_binding.as_ref()
+                != Some(&(
+                    msg.target_device_id.clone(),
+                    msg.controller_id.clone(),
+                    msg.method_name.clone(),
+                ))
+            {
+                send_error_response(&out_tx, device_id, seq, ErrorCode::InternalError).await;
+                continue;
             }
 
-            if let Some(cached) = cache.get(msg.sequence_number).await {
+            if let Some(ref sid) = stream_id {
+                router.begin_request(sid);
+            }
+
+            if let Some(cached) = cache.get(device_id, msg.sequence_number).await {
                 if let Some(ref sid) = stream_id {
-                    router.touch_stream(sid);
+                    router.finish_request(sid);
                 }
                 let _ = out_tx.send(Ok(cached)).await;
                 continue;
@@ -242,7 +273,7 @@ impl RelayGrpcService {
                 let t_device_id = msg.target_device_id.clone();
                 tokio::spawn(async move {
                     tokio::time::sleep(inflight_timeout).await;
-                    if let Some(inflight) = state_for_timeout.take_inflight(t_seq) {
+                    if let Some(inflight) = state_for_timeout.take_inflight(&t_device_id, t_seq) {
                         inflight
                             .complete(error_resp(&t_device_id, t_seq, ErrorCode::DeviceOffline))
                             .await;
@@ -250,10 +281,13 @@ impl RelayGrpcService {
                 });
 
                 let Some(device_session) = session_registry.get_device_session(device_id) else {
-                    if let Some(inflight) = state.take_inflight(msg.sequence_number) {
+                    if let Some(inflight) = state.take_inflight(device_id, msg.sequence_number) {
                         inflight
                             .complete(error_resp(device_id, seq, ErrorCode::DeviceOffline))
                             .await;
+                    }
+                    if let Some(ref sid) = stream_id {
+                        router.finish_request(sid);
                     }
                     continue;
                 };
@@ -264,11 +298,19 @@ impl RelayGrpcService {
                     msg.encrypted_payload.clone(),
                 );
 
-                if device_session.outbound_tx.send(Ok(relay_req)).await.is_err() {
-                    if let Some(inflight) = state.take_inflight(msg.sequence_number) {
+                if device_session
+                    .outbound_tx
+                    .send(Ok(relay_req))
+                    .await
+                    .is_err()
+                {
+                    if let Some(inflight) = state.take_inflight(device_id, msg.sequence_number) {
                         inflight
                             .complete(error_resp(device_id, seq, ErrorCode::DeviceOffline))
                             .await;
+                    }
+                    if let Some(ref sid) = stream_id {
+                        router.finish_request(sid);
                     }
                     continue;
                 }
@@ -276,12 +318,19 @@ impl RelayGrpcService {
 
             if let Ok(resp) = rx.await {
                 if is_new_forwarder {
-                    cache.insert(msg.sequence_number, resp.clone()).await;
+                    cache
+                        .insert(device_id, msg.sequence_number, resp.clone())
+                        .await;
                 }
                 if let Some(ref sid) = stream_id {
-                    router.touch_stream(sid);
+                    router.finish_request(sid);
                 }
                 let _ = out_tx.send(Ok(resp)).await;
+            } else {
+                if let Some(ref sid) = stream_id {
+                    router.finish_request(sid);
+                }
+                send_error_response(&out_tx, device_id, seq, ErrorCode::InternalError).await;
             }
         }
 
@@ -299,9 +348,7 @@ mod tests {
         RateLimitConfig, RelayConfig, StreamConfig,
     };
     use relay_proto::relay::v1::relay_message;
-    use relay_proto::relay::v1::{
-        DataResponse, RegisterRequest,
-    };
+    use relay_proto::relay::v1::{DataResponse, RegisterRequest};
     use tokio::sync::mpsc;
     use tokio_stream::wrappers::ReceiverStream;
 
@@ -355,6 +402,21 @@ mod tests {
         mpsc::Receiver<Result<RelayMessage, Status>>,
         String,
     ) {
+        let (device_tx, relay_rx, connection_id, _) =
+            start_device_loop_with_previous_connection(service, device_id, "").await;
+        (device_tx, relay_rx, connection_id)
+    }
+
+    async fn start_device_loop_with_previous_connection(
+        service: &RelayGrpcService,
+        device_id: &str,
+        previous_connection_id: &str,
+    ) -> (
+        mpsc::Sender<Result<DeviceMessage, Status>>,
+        mpsc::Receiver<Result<RelayMessage, Status>>,
+        String,
+        bool,
+    ) {
         let (device_tx, device_rx) = mpsc::channel(16);
         let (relay_tx, relay_rx) = mpsc::channel(16);
         let inbound = ReceiverStream::new(device_rx);
@@ -373,7 +435,7 @@ mod tests {
                 payload: Some(device_message::Payload::Register(RegisterRequest {
                     device_id: device_id.to_string(),
                     metadata: Default::default(),
-                    previous_connection_id: String::new(),
+                    previous_connection_id: previous_connection_id.to_string(),
                 })),
             }))
             .await
@@ -381,12 +443,14 @@ mod tests {
 
         let mut relay_rx = relay_rx;
         let register = relay_rx.recv().await.unwrap().unwrap();
-        let connection_id = match register.payload.unwrap() {
-            relay_message::Payload::RegisterResponse(resp) => resp.connection_id,
+        let (connection_id, session_resumed) = match register.payload.unwrap() {
+            relay_message::Payload::RegisterResponse(resp) => {
+                (resp.connection_id, resp.session_resumed)
+            }
             other => panic!("unexpected register response: {other:?}"),
         };
 
-        (device_tx, relay_rx, connection_id)
+        (device_tx, relay_rx, connection_id, session_resumed)
     }
 
     async fn start_controller_loop(
@@ -518,9 +582,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn same_sequence_on_different_devices_forwards_independently() {
+        let (service, _state) = service_with_state(test_config());
+        let (device1_tx, mut device1_stream, connection1) =
+            start_device_loop(&service, "dev-1").await;
+        let (device2_tx, mut device2_stream, connection2) =
+            start_device_loop(&service, "dev-2").await;
+        let (controller1_tx, mut controller1_stream) = start_controller_loop(&service).await;
+        let (controller2_tx, mut controller2_stream) = start_controller_loop(&service).await;
+
+        controller1_tx
+            .send(Ok(controller_message("dev-1", 11, b"one")))
+            .await
+            .unwrap();
+        controller2_tx
+            .send(Ok(controller_message("dev-2", 11, b"two")))
+            .await
+            .unwrap();
+
+        let forwarded1 = device1_stream.recv().await.unwrap().unwrap();
+        let forwarded2 = device2_stream.recv().await.unwrap().unwrap();
+        match forwarded1.payload.unwrap() {
+            relay_message::Payload::DataRequest(req) => assert_eq!(req.connection_id, connection1),
+            other => panic!("unexpected relay payload: {other:?}"),
+        }
+        match forwarded2.payload.unwrap() {
+            relay_message::Payload::DataRequest(req) => assert_eq!(req.connection_id, connection2),
+            other => panic!("unexpected relay payload: {other:?}"),
+        }
+
+        device1_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-1".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Data(DataResponse {
+                    connection_id: connection1,
+                    sequence_number: 11,
+                    encrypted_payload: b"resp-1".to_vec(),
+                    error: ErrorCode::Ok as i32,
+                })),
+            }))
+            .await
+            .unwrap();
+        device2_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-2".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Data(DataResponse {
+                    connection_id: connection2,
+                    sequence_number: 11,
+                    encrypted_payload: b"resp-2".to_vec(),
+                    error: ErrorCode::Ok as i32,
+                })),
+            }))
+            .await
+            .unwrap();
+
+        let response1 = controller1_stream.recv().await.unwrap().unwrap();
+        let response2 = controller2_stream.recv().await.unwrap().unwrap();
+        assert_eq!(response1.device_id, "dev-1");
+        assert_eq!(response1.encrypted_payload, b"resp-1");
+        assert_eq!(response2.device_id, "dev-2");
+        assert_eq!(response2.encrypted_payload, b"resp-2");
+    }
+
+    #[tokio::test]
     async fn list_online_devices_reflects_disconnect_cleanup() {
         let (service, _state) = service_with_state(test_config());
-        let (device_tx, _device_stream, _connection_id) = start_device_loop(&service, "dev-1").await;
+        let (device_tx, _device_stream, _connection_id) =
+            start_device_loop(&service, "dev-1").await;
 
         let listed = service
             .list_online_devices(Request::new(ListOnlineDevicesRequest {
@@ -572,6 +702,124 @@ mod tests {
         assert_eq!(response.device_id, "dev-1");
         assert_eq!(response.sequence_number, 99);
         assert_eq!(response.error, ErrorCode::DeviceOffline as i32);
+    }
+
+    #[tokio::test]
+    async fn device_disconnect_notifies_idle_and_inflight_streams() {
+        let (service, _state) = service_with_state(test_config());
+        let (device_tx, mut device_stream, connection_id) =
+            start_device_loop(&service, "dev-1").await;
+        let (idle_controller_tx, mut idle_controller_stream) =
+            start_controller_loop(&service).await;
+        let (inflight_controller_tx, mut inflight_controller_stream) =
+            start_controller_loop(&service).await;
+
+        idle_controller_tx
+            .send(Ok(controller_message("dev-1", 1, b"idle")))
+            .await
+            .unwrap();
+        let _ = device_stream.recv().await.unwrap().unwrap();
+        device_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-1".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Data(DataResponse {
+                    connection_id: connection_id.clone(),
+                    sequence_number: 1,
+                    encrypted_payload: b"done".to_vec(),
+                    error: ErrorCode::Ok as i32,
+                })),
+            }))
+            .await
+            .unwrap();
+        let idle_response = idle_controller_stream.recv().await.unwrap().unwrap();
+        assert_eq!(idle_response.error, ErrorCode::Ok as i32);
+
+        inflight_controller_tx
+            .send(Ok(controller_message("dev-1", 2, b"wait")))
+            .await
+            .unwrap();
+        let _ = device_stream.recv().await.unwrap().unwrap();
+
+        drop(device_tx);
+
+        let idle_offline = idle_controller_stream.recv().await.unwrap().unwrap();
+        let inflight_offline = inflight_controller_stream.recv().await.unwrap().unwrap();
+        assert_eq!(idle_offline.sequence_number, 0);
+        assert_eq!(idle_offline.error, ErrorCode::DeviceOffline as i32);
+        assert_eq!(inflight_offline.sequence_number, 2);
+        assert_eq!(inflight_offline.error, ErrorCode::DeviceOffline as i32);
+    }
+
+    #[tokio::test]
+    async fn controller_stream_rejects_target_changes_after_mapping_created() {
+        let (service, _state) = service_with_state(test_config());
+        let (device_tx, mut device_stream, connection_id) =
+            start_device_loop(&service, "dev-1").await;
+        let (controller_tx, mut controller_stream) = start_controller_loop(&service).await;
+
+        controller_tx
+            .send(Ok(controller_message("dev-1", 21, b"first")))
+            .await
+            .unwrap();
+        let _ = device_stream.recv().await.unwrap().unwrap();
+        device_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-1".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Data(DataResponse {
+                    connection_id,
+                    sequence_number: 21,
+                    encrypted_payload: b"ok".to_vec(),
+                    error: ErrorCode::Ok as i32,
+                })),
+            }))
+            .await
+            .unwrap();
+        let first_response = controller_stream.recv().await.unwrap().unwrap();
+        assert_eq!(first_response.error, ErrorCode::Ok as i32);
+
+        let mut changed_method = controller_message("dev-1", 22, b"second");
+        changed_method.method_name = "svc.Device/Other".into();
+        controller_tx.send(Ok(changed_method)).await.unwrap();
+
+        let error = controller_stream.recv().await.unwrap().unwrap();
+        assert_eq!(error.sequence_number, 22);
+        assert_eq!(error.error, ErrorCode::InternalError as i32);
+
+        let no_second_forward =
+            tokio::time::timeout(Duration::from_millis(100), device_stream.recv()).await;
+        assert!(no_second_forward.is_err());
+    }
+
+    #[tokio::test]
+    async fn register_reports_resume_and_replaces_previous_connection_mapping() {
+        let (service, state) = service_with_state(test_config());
+        let (first_device_tx, _first_stream, first_connection_id, first_resumed) =
+            start_device_loop_with_previous_connection(&service, "dev-1", "").await;
+        assert!(!first_resumed);
+        assert_eq!(
+            state
+                .device_id_for_connection(&first_connection_id)
+                .as_deref(),
+            Some("dev-1")
+        );
+
+        let (_second_device_tx, _second_stream, second_connection_id, second_resumed) =
+            start_device_loop_with_previous_connection(&service, "dev-1", &first_connection_id)
+                .await;
+        assert!(second_resumed);
+        assert!(state
+            .device_id_for_connection(&first_connection_id)
+            .is_none());
+        assert_eq!(
+            state
+                .device_id_for_connection(&second_connection_id)
+                .as_deref(),
+            Some("dev-1")
+        );
+
+        drop(first_device_tx);
     }
 }
 

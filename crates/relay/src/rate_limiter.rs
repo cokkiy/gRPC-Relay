@@ -1,5 +1,8 @@
 use crate::config::RateLimitConfig;
 use dashmap::{mapref::entry::Entry, DashMap};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 use std::time::Instant;
 
 #[derive(Debug, Clone)]
@@ -17,7 +20,9 @@ pub struct RateLimiter {
     device_rate: f64,
     controller_rate: f64,
     global_rate: f64,
-    buckets: DashMap<String, Bucket>,
+    buckets: Arc<DashMap<String, Bucket>>,
+    cleanup_counter: Arc<AtomicUsize>,
+    bucket_ttl: Duration,
 }
 
 impl RateLimiter {
@@ -26,11 +31,15 @@ impl RateLimiter {
             device_rate: config.device_requests_per_second as f64,
             controller_rate: config.controller_requests_per_second as f64,
             global_rate: config.global_requests_per_second as f64,
-            buckets: DashMap::new(),
+            buckets: Arc::new(DashMap::new()),
+            cleanup_counter: Arc::new(AtomicUsize::new(0)),
+            bucket_ttl: Duration::from_secs(300),
         }
     }
 
     pub fn allow(&self, device_id: &str, controller_id: &str) -> bool {
+        self.maybe_cleanup();
+
         if !self.check_key("global", self.global_rate) {
             return false;
         }
@@ -41,6 +50,10 @@ impl RateLimiter {
     }
 
     fn check_key(&self, key: &str, rate: f64) -> bool {
+        if rate <= 0.0 {
+            return false;
+        }
+
         let now = Instant::now();
 
         match self.buckets.entry(key.to_string()) {
@@ -60,11 +73,37 @@ impl RateLimiter {
             }
             Entry::Vacant(v) => {
                 v.insert(Bucket {
-                    tokens: rate - 1.0,
+                    tokens: (rate - 1.0).max(0.0),
                     last: now,
                 });
                 true
             }
+        }
+    }
+
+    fn maybe_cleanup(&self) {
+        const CLEANUP_EVERY: usize = 256;
+
+        let count = self.cleanup_counter.fetch_add(1, Ordering::Relaxed) + 1;
+        if count % CLEANUP_EVERY != 0 {
+            return;
+        }
+
+        let now = Instant::now();
+        let stale: Vec<String> = self
+            .buckets
+            .iter()
+            .filter_map(|entry| {
+                if now.saturating_duration_since(entry.last) >= self.bucket_ttl {
+                    Some(entry.key().clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for key in stale {
+            self.buckets.remove(&key);
         }
     }
 
@@ -133,5 +172,16 @@ mod tests {
         let rl = RateLimiter::new(&config);
         assert!(rl.allow("dev-1", "ctrl-1"));
         assert!(!rl.allow("dev-2", "ctrl-2"));
+    }
+
+    #[test]
+    fn zero_rate_denies_requests() {
+        let config = RateLimitConfig {
+            device_requests_per_second: 0,
+            controller_requests_per_second: 1000,
+            global_requests_per_second: 100_000,
+        };
+        let rl = RateLimiter::new(&config);
+        assert!(!rl.allow("dev-1", "ctrl-1"));
     }
 }
