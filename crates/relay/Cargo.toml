@@ -18,4 +18,17 @@ clap = { workspace = true }
 axum = { workspace = true, features = ["tokio"] }
 hyper = { workspace = true }
 time = { workspace = true }
+
+# gRPC server + streaming
+tonic = { version = "0.11", features = ["transport"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+futures-util = "0.3"
+bytes = "1"
+
+# Idempotency cache (LRU + TTL)
+lru_time_cache = "0.11"
+
+# Session / in-flight coordination
+dashmap = "6"
+
 relay-proto = { path = "../relay-proto" }

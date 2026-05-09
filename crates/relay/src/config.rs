@@ -19,6 +19,66 @@ pub struct RelayConfig {
     pub max_device_connections: u32,
     #[serde(default = "default_heartbeat_interval_seconds")]
     pub heartbeat_interval_seconds: u64,
+    #[serde(default)]
+    pub stream: StreamConfig,
+    #[serde(default)]
+    pub rate_limiting: RateLimitConfig,
+    #[serde(default)]
+    pub idempotency: IdempotencyConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StreamConfig {
+    #[serde(default = "default_stream_idle_timeout")]
+    pub idle_timeout_seconds: u64,
+    #[serde(default = "default_max_active_streams")]
+    pub max_active_streams: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RateLimitConfig {
+    #[serde(default = "default_device_rps")]
+    pub device_requests_per_second: u64,
+    #[serde(default = "default_controller_rps")]
+    pub controller_requests_per_second: u64,
+    #[serde(default = "default_global_rps")]
+    pub global_requests_per_second: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IdempotencyConfig {
+    #[serde(default = "default_cache_capacity")]
+    pub cache_capacity: usize,
+    #[serde(default = "default_cache_ttl_seconds")]
+    pub cache_ttl_seconds: u64,
+}
+
+impl Default for StreamConfig {
+    fn default() -> Self {
+        Self {
+            idle_timeout_seconds: default_stream_idle_timeout(),
+            max_active_streams: default_max_active_streams(),
+        }
+    }
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            device_requests_per_second: default_device_rps(),
+            controller_requests_per_second: default_controller_rps(),
+            global_requests_per_second: default_global_rps(),
+        }
+    }
+}
+
+impl Default for IdempotencyConfig {
+    fn default() -> Self {
+        Self {
+            cache_capacity: default_cache_capacity(),
+            cache_ttl_seconds: default_cache_ttl_seconds(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -126,4 +186,32 @@ fn default_health_address() -> String {
 
 fn default_health_path() -> String {
     "/health".to_string()
+}
+
+fn default_stream_idle_timeout() -> u64 {
+    300
+}
+
+fn default_max_active_streams() -> u32 {
+    1000
+}
+
+fn default_device_rps() -> u64 {
+    100
+}
+
+fn default_controller_rps() -> u64 {
+    1000
+}
+
+fn default_global_rps() -> u64 {
+    100_000
+}
+
+fn default_cache_capacity() -> usize {
+    10_000
+}
+
+fn default_cache_ttl_seconds() -> u64 {
+    3600
 }

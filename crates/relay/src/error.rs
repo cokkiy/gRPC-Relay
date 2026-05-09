@@ -36,4 +36,25 @@ pub enum AppError {
 
     #[error("health server task failed: {0}")]
     HealthTask(#[source] tokio::task::JoinError),
+
+    #[error("gRPC server failed: {0}")]
+    GrpcServer(#[from] tonic::transport::Error),
+
+    #[error("gRPC server task failed: {0}")]
+    GrpcTask(#[source] tokio::task::JoinError),
+
+    #[error("stream router: {0}")]
+    StreamRouter(String),
+
+    #[error("validation error: {0}")]
+    Validation(String),
+
+    #[error("rate limit exceeded: {entity_type} {entity_id}")]
+    RateLimited {
+        entity_type: &'static str,
+        entity_id: String,
+    },
+
+    #[error("max streams exceeded for device {device_id} (max: {max})")]
+    MaxStreamsExceeded { device_id: String, max: u32 },
 }
