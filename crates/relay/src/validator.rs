@@ -102,7 +102,14 @@ mod tests {
 
     #[test]
     fn valid_controller_message_passes() {
-        assert!(validate_controller_message("ctrl-123", "dev-456", "ExecuteCommand", &[0u8; 100], 1).is_ok());
+        assert!(validate_controller_message(
+            "ctrl-123",
+            "dev-456",
+            "ExecuteCommand",
+            &[0u8; 100],
+            1
+        )
+        .is_ok());
     }
 
     #[test]
