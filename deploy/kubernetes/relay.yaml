@@ -24,7 +24,8 @@ data:
         enabled: true
         jwt:
           enabled: true
-          hs256_secret: "replace-with-secret-manager-value"
+          # Inject from a Kubernetes Secret or external secret manager at runtime.
+          hs256_secret: "${RELAY_JWT_HS256_SECRET}"
           issuer: "grpc-relay"
           audience: "grpc-relay-controller"
         controller_tokens:
