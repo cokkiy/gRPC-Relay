@@ -90,7 +90,7 @@ impl RelayGrpcService {
 
     async fn run_device_connect_stream<S>(
         state: Arc<RelayState>,
-        session_registry: SessionRegistry,
+        _session_registry: SessionRegistry,
         stream_router: StreamRouter,
         auth_service: AuthService,
         security_metrics: SecurityMetrics,
@@ -107,6 +107,32 @@ impl RelayGrpcService {
             };
             let dev_id = dev_msg.device_id.clone();
             let device_token = dev_msg.token.clone();
+            if !matches!(dev_msg.payload, Some(device_message::Payload::Register(_))) {
+                match current_device_id.as_deref() {
+                    Some(current_id) if current_id == dev_id.as_str() => {}
+                    Some(current_id) => {
+                        tracing::info!(
+                            event = "auth_failure",
+                            actor_type = "device",
+                            device_id = %dev_id,
+                            expected_device_id = %current_id,
+                            token_prefix = %AuthService::token_prefix(&device_token),
+                            reason = "device_id_mismatch_on_stream"
+                        );
+                        break;
+                    }
+                    None => {
+                        tracing::info!(
+                            event = "auth_failure",
+                            actor_type = "device",
+                            device_id = %dev_id,
+                            token_prefix = %AuthService::token_prefix(&device_token),
+                            reason = "non_register_before_registration"
+                        );
+                        break;
+                    }
+                }
+            }
 
             match dev_msg.payload {
                 Some(device_message::Payload::Register(register_req)) => {
@@ -174,40 +200,37 @@ impl RelayGrpcService {
                 }
                 Some(device_message::Payload::Heartbeat(_hb)) => {
                     // Heartbeat authentication (MVP: re-check token matches device_id)
-                    if current_device_id.as_deref() == Some(dev_id.as_str()) {
-                        if auth_service
-                            .authenticate_device_by_token(&dev_id, &device_token)
-                            .is_err()
-                        {
-                            tracing::info!(
-                                event = "auth_failure",
-                                actor_type = "device",
-                                device_id = %dev_id,
-                                token_prefix = %AuthService::token_prefix(&device_token),
-                                reason = "invalid_device_token_on_heartbeat"
-                            );
-                            break;
-                        } else {
-                            security_metrics.record_auth_success();
-                            tracing::info!(
-                                event = "auth_success",
-                                actor_type = "device",
-                                device_id = %dev_id,
-                                token_prefix = %AuthService::token_prefix(&device_token),
-                                reason = "device_token_ok_on_heartbeat"
-                            );
-                        }
+                    if auth_service
+                        .authenticate_device_by_token(&dev_id, &device_token)
+                        .is_err()
+                    {
+                        tracing::info!(
+                            event = "auth_failure",
+                            actor_type = "device",
+                            device_id = %dev_id,
+                            token_prefix = %AuthService::token_prefix(&device_token),
+                            reason = "invalid_device_token_on_heartbeat"
+                        );
+                        break;
+                    } else {
+                        security_metrics.record_auth_success();
+                        tracing::info!(
+                            event = "auth_success",
+                            actor_type = "device",
+                            device_id = %dev_id,
+                            token_prefix = %AuthService::token_prefix(&device_token),
+                            reason = "device_token_ok_on_heartbeat"
+                        );
                     }
 
                     let resp = relay_message_heartbeat_response();
                     let _ = out_tx.send(Ok(resp)).await;
                 }
                 Some(device_message::Payload::Data(data_resp)) => {
-                    let response_device_id = session_registry
-                        .get_device_session(&dev_id)
-                        .map(|session| session.device_id)
-                        .or_else(|| state.device_id_for_connection(&data_resp.connection_id))
-                        .unwrap_or(dev_id.clone());
+                    let response_device_id = current_device_id
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| dev_id.clone());
                     if let Some(inflight) =
                         state.take_inflight(&response_device_id, data_resp.sequence_number)
                     {
@@ -1001,6 +1024,39 @@ mod tests {
         let no_second_forward =
             tokio::time::timeout(Duration::from_millis(100), device_stream.recv()).await;
         assert!(no_second_forward.is_err());
+    }
+
+    #[tokio::test]
+    async fn device_stream_rejects_non_register_device_id_mismatch() {
+        let (service, _state) = service_with_state(test_config());
+        let (device_tx, mut device_stream, connection_id) =
+            start_device_loop(&service, "dev-1").await;
+        let (controller_tx, mut controller_stream) = start_controller_loop(&service).await;
+
+        controller_tx
+            .send(Ok(controller_message("dev-1", 42, b"hello")))
+            .await
+            .unwrap();
+        let _ = device_stream.recv().await.unwrap().unwrap();
+
+        device_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-2".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Data(DataResponse {
+                    connection_id,
+                    sequence_number: 42,
+                    encrypted_payload: b"world".to_vec(),
+                    error: ErrorCode::Ok as i32,
+                })),
+            }))
+            .await
+            .unwrap();
+
+        let response = controller_stream.recv().await.unwrap().unwrap();
+        assert_eq!(response.device_id, "dev-1");
+        assert_eq!(response.sequence_number, 42);
+        assert_eq!(response.error, ErrorCode::DeviceOffline as i32);
     }
 
     #[tokio::test]
