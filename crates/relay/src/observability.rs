@@ -7,19 +7,29 @@ use tracing::info;
 
 use tokio::net::TcpListener;
 
+use crate::resource_monitor::ResourceMonitor;
+use crate::security_metrics::{SecurityMetrics, SecurityMetricsSnapshot};
 use crate::{config::HealthConfig, AppError, Result};
 
 #[derive(Clone)]
 pub struct HealthState {
     started_at: Instant,
     version: &'static str,
+    security_metrics: SecurityMetrics,
+    resource_monitor: ResourceMonitor,
 }
 
 impl HealthState {
-    pub fn new(version: &'static str) -> Self {
+    pub fn new(
+        version: &'static str,
+        security_metrics: SecurityMetrics,
+        resource_monitor: ResourceMonitor,
+    ) -> Self {
         Self {
             started_at: Instant::now(),
             version,
+            security_metrics,
+            resource_monitor,
         }
     }
 }
@@ -89,7 +99,12 @@ fn derive_overall_status(components: &HealthComponents) -> &'static str {
     }
 }
 
-pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result<()> {
+pub async fn serve_health(
+    config: HealthConfig,
+    version: &'static str,
+    security_metrics: SecurityMetrics,
+    resource_monitor: ResourceMonitor,
+) -> Result<()> {
     if !config.enabled {
         info!("health server disabled");
         return Ok(());
@@ -104,9 +119,10 @@ pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result
                 source,
             })?;
 
-    let state = HealthState::new(version);
+    let state = HealthState::new(version, security_metrics, resource_monitor);
     let app = Router::new()
         .route(&config.path, get(health))
+        .route("/metrics/security", get(security_metrics_handler))
         .with_state(state);
 
     info!(
@@ -166,12 +182,18 @@ async fn health(
             active_device_connections: 0,
             active_controller_connections: 0,
             active_streams: 0,
-            cpu_usage_percent: 0.0,
-            memory_usage_percent: 0.0,
+            cpu_usage_percent: state.resource_monitor.cpu_usage_percent(),
+            memory_usage_percent: state.resource_monitor.memory_usage_percent(),
         },
     };
 
     Json(response)
+}
+
+async fn security_metrics_handler(
+    axum::extract::State(state): axum::extract::State<HealthState>,
+) -> Json<SecurityMetricsSnapshot> {
+    Json(state.security_metrics.snapshot())
 }
 
 #[cfg(test)]

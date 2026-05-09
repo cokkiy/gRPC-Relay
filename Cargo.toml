@@ -25,3 +25,4 @@ clap = { version = "4", features = ["derive"] }
 axum = "0.8"
 hyper = "1.9"
 time = { version = "0.3", features = ["formatting"] }
+jsonwebtoken = "9"

@@ -14,6 +14,9 @@ pub enum AppError {
         source: std::io::Error,
     },
 
+    #[error("invalid TLS config: {0}")]
+    InvalidTlsConfig(String),
+
     #[error("invalid socket address `{address}`: {source}")]
     InvalidSocketAddress {
         address: String,

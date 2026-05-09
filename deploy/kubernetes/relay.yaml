@@ -16,6 +16,30 @@ data:
       quic_address: 0.0.0.0:50052
       max_device_connections: 10000
       heartbeat_interval_seconds: 30
+      tls:
+        enabled: true
+        cert_path: /etc/relay/tls/tls.crt
+        key_path: /etc/relay/tls/tls.key
+      auth:
+        enabled: true
+        jwt:
+          enabled: true
+          # Supply the JWT secret via the container environment variable
+          # RELAY__AUTH__JWT__HS256_SECRET (for example from a Kubernetes Secret).
+          issuer: "grpc-relay"
+          audience: "grpc-relay-controller"
+        controller_tokens:
+          controller-token:
+            controller_id: "ctrl-1"
+            role: "operator"
+            allowed_project_ids: ["proj-1"]
+        device_tokens:
+          device-token:
+            device_id: "device-001"
+            project_id: "proj-1"
+        method_whitelist:
+          - "svc.Device/Invoke"
+          - "ExecuteCommand"
     observability:
       logging:
         level: info

@@ -61,9 +61,7 @@ where
                     attempt = 0;
                     true
                 }
-                Err(DeviceSdkError::ConnectionClosed) | Err(DeviceSdkError::Grpc(_)) => {
-                    true
-                }
+                Err(DeviceSdkError::ConnectionClosed) | Err(DeviceSdkError::Grpc(_)) => true,
                 Err(err) => {
                     tracing::error!(error=?err, "fatal error in device connect client; stop");
                     return Err(err);
@@ -148,8 +146,7 @@ where
         // start heartbeat after first RegisterResponse (connection_id becomes known)
         let mut heartbeat_task: Option<JoinHandle<()>> = None;
         let mut registered_connection_id: Option<String> = None;
-        let data_handler_limit =
-            std::sync::Arc::new(Semaphore::new(MAX_CONCURRENT_DATA_HANDLERS));
+        let data_handler_limit = std::sync::Arc::new(Semaphore::new(MAX_CONCURRENT_DATA_HANDLERS));
 
         loop {
             let relay_msg = match response_stream.message().await {

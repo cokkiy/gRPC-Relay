@@ -33,6 +33,7 @@ service RelayService {
   rpc DeviceConnect(stream DeviceMessage) returns (stream RelayMessage);
   rpc ListOnlineDevices(ListOnlineDevicesRequest) returns (ListOnlineDevicesResponse);
   rpc ConnectToDevice(stream ControllerMessage) returns (stream DeviceResponse);
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
 }
 ```
 
@@ -112,6 +113,18 @@ service RelayService {
 > - 本 proto 中 `ListOnlineDevicesResponse` 没有 `ErrorCode` 字段。
 > - 因此该 RPC 的鉴权/授权/限流/内部错误应使用 **gRPC Status** 表达，而不是写入响应体的 `error_code`。
 
+#### 2.2.4 RevokeToken（Controller 管理操作）
+- `RevokeTokenRequest`
+  - `controller_id`：发起撤销的 Controller 标识。
+  - `admin_token`：管理员 Controller 的 JWT。
+  - `target_type`：`CONTROLLER` 或 `DEVICE`。
+  - `target_token_hash_or_prefix`：待撤销 token 的完整值或前缀；Relay 按完整匹配或前缀匹配拒绝后续认证。
+  - `reason`：审计用撤销原因。
+- `RevokeTokenResponse`
+  - `revoked`：撤销是否已被 Relay 接受。
+
+> 权限语义：仅 `role=admin` 的 Controller JWT 可以调用该 RPC；非 admin 返回 `PERMISSION_DENIED`。当前 MVP/P1 实现使用单 Relay 进程内存撤销集合，重启后不持久化，多 Relay 一致性留给后续版本。
+
 ### 2.3 ErrorCode 与 gRPC Status code 映射（建议契约）
 本规范以 `ErrorCode` 枚举为“应用层结果码”，以 gRPC Status 为“传输/鉴权/授权层结果”。
 
@@ -132,7 +145,28 @@ service RelayService {
 - `RESOURCE_EXHAUSTED`：限流
 - `INTERNAL`：内部错误
 
-> 注：在现阶段代码骨架未实现鉴权/限流逻辑，本节作为契约后续落地的依据。
+> 当前 Relay 已对 `ListOnlineDevices` 使用 gRPC Status 表达认证失败、权限失败和限流；`ConnectToDevice` 流内继续使用 `DeviceResponse.error`。
+
+### 2.4 Controller JWT Claims（当前实现）
+Controller 认证使用 HS256 JWT。Relay 校验签名、过期时间，以及可选的 issuer/audience。
+
+JWT claims 至少包含：
+```json
+{
+  "sub": "ctrl-1",
+  "controller_id": "ctrl-1",
+  "role": "admin | operator | viewer",
+  "allowed_project_ids": ["proj-1"],
+  "exp": 1893456000,
+  "iss": "grpc-relay",
+  "aud": "grpc-relay-controller"
+}
+```
+
+约束：
+- `sub` 与 `controller_id` 必须等于请求字段 `controller_id`。
+- `admin` 可访问所有设备并可调用 `RevokeToken`。
+- `operator` / `viewer` 只能访问 `allowed_project_ids` 覆盖的设备。
 
 ---
 
@@ -279,16 +313,28 @@ service RelayService {
 
 ---
 
-## 5. 指标接口契约（/metrics）
+## 5. 指标接口契约（/metrics/security）
 
 ### 5.1 状态
-本项目在当前阶段 **不落地 `/metrics` endpoint**。
+当前 MVP/P1 已落地安全指标 JSON endpoint：`GET /metrics/security`。
 
 ### 5.2 约定
-- 文档保留 Prometheus metric naming/label 规范作为后续实现基线
-- 不新增实际 HTTP endpoint
-- `doc/protocol_spec.md` 不包含 `/metrics` 真实输出示例，以避免与当前实现脱节
+- 该 endpoint 与 `/health` 使用同一个 HTTP 服务端口，默认 `0.0.0.0:8080`。
+- 该 endpoint 返回 JSON，不是 Prometheus 文本格式。
+- 完整 Prometheus `/metrics` 仍是后续版本范围。
 
-> （如未来需要实现 `/metrics`，请在 v0.2 更新本节并同步代码、依赖与集成验证。）
+### 5.3 Response JSON Shape
+```json
+{
+  "auth_success_total": 10,
+  "auth_failure_total": 2,
+  "authorization_denied_total": 1,
+  "rate_limit_total": 3,
+  "revoked_tokens_total": 1,
+  "auth_failure_ratio": 0.16666666666666666,
+  "authorization_denied_ratio": 0.08333333333333333,
+  "rate_limit_ratio": 0.25
+}
+```
 
 ---

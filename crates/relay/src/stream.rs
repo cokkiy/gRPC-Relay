@@ -65,6 +65,7 @@ pub struct StreamRouter {
     device_to_streams: Arc<DashMap<String, HashSet<String>>>,
     controller_to_streams: Arc<DashMap<String, HashSet<String>>>,
     max_active_streams: u32,
+    max_concurrent_streams_per_controller: u32,
     idle_timeout: Duration,
 }
 
@@ -76,6 +77,7 @@ impl StreamRouter {
             device_to_streams: Arc::new(DashMap::new()),
             controller_to_streams: Arc::new(DashMap::new()),
             max_active_streams: config.max_active_streams,
+            max_concurrent_streams_per_controller: config.max_concurrent_streams_per_controller,
             idle_timeout: Duration::from_secs(config.idle_timeout_seconds),
         }
     }
@@ -134,11 +136,28 @@ impl StreamRouter {
             }
         };
 
-        self.mappings.insert(stream_id.clone(), mapping);
-
-        // Track by controller
+        // Track by controller — enforce per-controller concurrent stream cap
         match self.controller_to_streams.entry(controller_id) {
             Entry::Occupied(mut o) => {
+                let current = o.get().len();
+                if current >= self.max_concurrent_streams_per_controller as usize {
+                    // Roll back the device tracking we just did
+                    if let Entry::Occupied(mut dev_entry) =
+                        self.device_to_streams.entry(mapping.device_id.clone())
+                    {
+                        dev_entry.get_mut().remove(&stream_id);
+                        if dev_entry.get().is_empty() {
+                            dev_entry.remove();
+                        }
+                    }
+                    return Err(StreamRouterError {
+                        kind: StreamRouterErrorKind::MaxStreamsExceeded,
+                        message: format!(
+                            "controller {} has {current} active streams (max: {})",
+                            mapping.controller_id, self.max_concurrent_streams_per_controller
+                        ),
+                    });
+                }
                 o.get_mut().insert(stream_id.clone());
             }
             Entry::Vacant(v) => {
@@ -147,6 +166,8 @@ impl StreamRouter {
                 v.insert(set);
             }
         }
+
+        self.mappings.insert(stream_id.clone(), mapping);
 
         debug_assert!(stream_count <= self.max_active_streams as usize);
 
@@ -288,6 +309,7 @@ mod tests {
         StreamConfig {
             idle_timeout_seconds: 300,
             max_active_streams: 10,
+            max_concurrent_streams_per_controller: 100,
         }
     }
 
@@ -321,6 +343,7 @@ mod tests {
         let config = StreamConfig {
             idle_timeout_seconds: 300,
             max_active_streams: 2,
+            max_concurrent_streams_per_controller: 100,
         };
         let router = StreamRouter::new(&config);
 
@@ -359,6 +382,7 @@ mod tests {
         let config = StreamConfig {
             idle_timeout_seconds: 0, // immediate expiration
             max_active_streams: 10,
+            max_concurrent_streams_per_controller: 100,
         };
         let router = StreamRouter::new(&config);
 
@@ -379,6 +403,7 @@ mod tests {
         let config = StreamConfig {
             idle_timeout_seconds: 3600,
             max_active_streams: 10,
+            max_concurrent_streams_per_controller: 100,
         };
         let router = StreamRouter::new(&config);
         let sid = router
@@ -396,6 +421,7 @@ mod tests {
         let config = StreamConfig {
             idle_timeout_seconds: 0,
             max_active_streams: 10,
+            max_concurrent_streams_per_controller: 100,
         };
         let router = StreamRouter::new(&config);
         let sid = router
@@ -409,5 +435,33 @@ mod tests {
 
         router.finish_request(&sid);
         assert_eq!(router.cleanup_stale().len(), 1);
+    }
+
+    #[test]
+    fn max_concurrent_streams_per_controller_enforced() {
+        let config = StreamConfig {
+            idle_timeout_seconds: 300,
+            max_active_streams: 100,
+            max_concurrent_streams_per_controller: 2,
+        };
+        let router = StreamRouter::new(&config);
+
+        router
+            .create_mapping("dev-1".into(), "ctrl-1".into(), "m1".into(), dummy_tx())
+            .unwrap();
+        router
+            .create_mapping("dev-2".into(), "ctrl-1".into(), "m2".into(), dummy_tx())
+            .unwrap();
+
+        let err = router
+            .create_mapping("dev-3".into(), "ctrl-1".into(), "m3".into(), dummy_tx())
+            .unwrap_err();
+        assert_eq!(err.kind, StreamRouterErrorKind::MaxStreamsExceeded);
+
+        // Different controller should still work
+        let sid = router
+            .create_mapping("dev-3".into(), "ctrl-2".into(), "m3".into(), dummy_tx())
+            .unwrap();
+        assert!(router.remove_mapping(&sid).is_some());
     }
 }

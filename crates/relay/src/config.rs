@@ -25,6 +25,10 @@ pub struct RelayConfig {
     pub rate_limiting: RateLimitConfig,
     #[serde(default)]
     pub idempotency: IdempotencyConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    #[serde(default)]
+    pub tls: TlsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -33,16 +37,39 @@ pub struct StreamConfig {
     pub idle_timeout_seconds: u64,
     #[serde(default = "default_max_active_streams")]
     pub max_active_streams: u32,
+    #[serde(default = "default_max_concurrent_streams_per_controller")]
+    pub max_concurrent_streams_per_controller: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RateLimitConfig {
+    // Request rate limits
     #[serde(default = "default_device_rps")]
     pub device_requests_per_second: u64,
-    #[serde(default = "default_controller_rps")]
-    pub controller_requests_per_second: u64,
+    #[serde(default = "default_controller_rpm")]
+    pub controller_requests_per_minute: u64,
     #[serde(default = "default_global_rps")]
     pub global_requests_per_second: u64,
+
+    // Connection rate limits
+    #[serde(default = "default_device_conn_per_minute")]
+    pub device_connection_per_minute: u32,
+    #[serde(default = "default_global_conn_per_second")]
+    pub global_connections_per_second: u32,
+
+    // Bandwidth limits (bytes per second)
+    #[serde(default = "default_device_bw")]
+    pub device_bandwidth_bytes_per_sec: u64,
+    #[serde(default = "default_controller_bw")]
+    pub controller_bandwidth_bytes_per_sec: u64,
+    #[serde(default = "default_global_bw")]
+    pub global_bandwidth_bytes_per_sec: u64,
+
+    // Resource thresholds
+    #[serde(default = "default_cpu_threshold")]
+    pub cpu_threshold_percent: f64,
+    #[serde(default = "default_memory_threshold_mb")]
+    pub memory_threshold_mb: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -53,11 +80,79 @@ pub struct IdempotencyConfig {
     pub cache_ttl_seconds: u64,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthConfig {
+    /// Whether Relay should enforce authentication/authorization.
+    ///
+    /// For MVP security requirements, set to true in `config/relay.yaml`.
+    #[serde(default = "default_auth_enabled")]
+    pub enabled: bool,
+
+    /// Map token -> controller auth entry.
+    ///
+    /// MVP: static token verification (JWT/mTLS can be added in P1/P2).
+    #[serde(default)]
+    pub controller_tokens: std::collections::HashMap<String, ControllerAuthEntry>,
+
+    /// Map token -> device auth entry.
+    #[serde(default)]
+    pub device_tokens: std::collections::HashMap<String, DeviceAuthEntry>,
+
+    /// Allowed method list. If empty, all methods are allowed (MVP default).
+    #[serde(default)]
+    pub method_whitelist: Vec<String>,
+
+    #[serde(default)]
+    pub jwt: JwtConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct JwtConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub hs256_secret: String,
+    #[serde(default)]
+    pub issuer: Option<String>,
+    #[serde(default)]
+    pub audience: Option<String>,
+    #[serde(default = "default_jwt_clock_skew_seconds")]
+    pub clock_skew_seconds: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ControllerAuthEntry {
+    pub controller_id: String,
+    /// admin / operator / viewer
+    pub role: String,
+    #[serde(default)]
+    pub allowed_project_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceAuthEntry {
+    pub device_id: String,
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TlsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cert_path: Option<String>,
+    #[serde(default)]
+    pub key_path: Option<String>,
+    #[serde(default)]
+    pub client_ca_path: Option<String>,
+}
+
 impl Default for StreamConfig {
     fn default() -> Self {
         Self {
             idle_timeout_seconds: default_stream_idle_timeout(),
             max_active_streams: default_max_active_streams(),
+            max_concurrent_streams_per_controller: default_max_concurrent_streams_per_controller(),
         }
     }
 }
@@ -66,8 +161,15 @@ impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
             device_requests_per_second: default_device_rps(),
-            controller_requests_per_second: default_controller_rps(),
+            controller_requests_per_minute: default_controller_rpm(),
             global_requests_per_second: default_global_rps(),
+            device_connection_per_minute: default_device_conn_per_minute(),
+            global_connections_per_second: default_global_conn_per_second(),
+            device_bandwidth_bytes_per_sec: default_device_bw(),
+            controller_bandwidth_bytes_per_sec: default_controller_bw(),
+            global_bandwidth_bytes_per_sec: default_global_bw(),
+            cpu_threshold_percent: default_cpu_threshold(),
+            memory_threshold_mb: default_memory_threshold_mb(),
         }
     }
 }
@@ -193,19 +295,51 @@ fn default_stream_idle_timeout() -> u64 {
 }
 
 fn default_max_active_streams() -> u32 {
-    1000
+    10
 }
 
-fn default_device_rps() -> u64 {
+fn default_max_concurrent_streams_per_controller() -> u32 {
     100
 }
 
-fn default_controller_rps() -> u64 {
+fn default_device_rps() -> u64 {
+    1000
+}
+
+fn default_controller_rpm() -> u64 {
     1000
 }
 
 fn default_global_rps() -> u64 {
     100_000
+}
+
+fn default_device_conn_per_minute() -> u32 {
+    10
+}
+
+fn default_global_conn_per_second() -> u32 {
+    100
+}
+
+fn default_device_bw() -> u64 {
+    10 * 1024 * 1024 // 10 MB/s
+}
+
+fn default_controller_bw() -> u64 {
+    100 * 1024 * 1024 // 100 MB/s
+}
+
+fn default_global_bw() -> u64 {
+    100 * 1024 * 1024 // 100 MB/s (800 Mbps)
+}
+
+fn default_cpu_threshold() -> f64 {
+    80.0
+}
+
+fn default_memory_threshold_mb() -> u64 {
+    12 * 1024 // 12 GB
 }
 
 fn default_cache_capacity() -> usize {
@@ -214,4 +348,36 @@ fn default_cache_capacity() -> usize {
 
 fn default_cache_ttl_seconds() -> u64 {
     3600
+}
+
+fn default_auth_enabled() -> bool {
+    false
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_auth_enabled(),
+            controller_tokens: Default::default(),
+            device_tokens: Default::default(),
+            method_whitelist: Vec::new(),
+            jwt: JwtConfig::default(),
+        }
+    }
+}
+
+impl Default for JwtConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hs256_secret: String::new(),
+            issuer: None,
+            audience: None,
+            clock_skew_seconds: default_jwt_clock_skew_seconds(),
+        }
+    }
+}
+
+fn default_jwt_clock_skew_seconds() -> u64 {
+    30
 }

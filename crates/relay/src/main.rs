@@ -1,9 +1,14 @@
 use clap::Parser;
 use relay::{
-    config::AppConfig, grpc_service::RelayGrpcService, logging, observability, state::RelayState,
+    config::AppConfig,
+    grpc_service::RelayGrpcService,
+    logging,
+    observability,
+    resource_monitor::ResourceMonitor,
+    state::RelayState,
     Result,
 };
-use tonic::transport::Server;
+use tonic::transport::{Identity, Server, ServerTlsConfig};
 use tracing::info;
 
 #[derive(Debug, Parser)]
@@ -25,6 +30,7 @@ async fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = AppConfig::load(&cli.config)?;
     logging::init(&config.observability.logging);
+    let security_metrics = relay::security_metrics::SecurityMetrics::default();
 
     info!(
         relay_id = %config.relay.id,
@@ -32,14 +38,19 @@ async fn run() -> Result<()> {
         "relay configuration loaded"
     );
 
+    let resource_monitor = ResourceMonitor::new(&config.relay.rate_limiting);
     let health_config = config.observability.health.clone();
+    let health_security_metrics = security_metrics.clone();
+    let health_resource_monitor = resource_monitor.clone();
     let health_server = tokio::spawn(observability::serve_health(
         health_config,
         env!("CARGO_PKG_VERSION"),
+        health_security_metrics,
+        health_resource_monitor,
     ));
 
     let relay_state = std::sync::Arc::new(RelayState::new());
-    let grpc_service = RelayGrpcService::new(relay_state, &config);
+    let grpc_service = RelayGrpcService::new(relay_state, &config, security_metrics, resource_monitor);
     let stale_stream_cleanup = grpc_service.spawn_stale_stream_cleanup();
     let grpc_addr = config
         .relay
@@ -52,7 +63,11 @@ async fn run() -> Result<()> {
 
     let grpc_server = tokio::spawn(async move {
         info!(%grpc_addr, "starting tonic gRPC server");
-        let res = Server::builder()
+        let mut builder = Server::builder();
+        if config.relay.tls.enabled {
+            builder = builder.tls_config(load_tls_config(&config.relay.tls)?)?;
+        }
+        let res = builder
             .add_service(
                 relay_proto::relay::v1::relay_service_server::RelayServiceServer::new(grpc_service),
             )
@@ -82,4 +97,35 @@ async fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn load_tls_config(config: &relay::config::TlsConfig) -> Result<ServerTlsConfig> {
+    let cert_path = config
+        .cert_path
+        .as_deref()
+        .ok_or_else(|| relay::AppError::InvalidTlsConfig("missing cert_path".to_string()))?;
+    let key_path = config
+        .key_path
+        .as_deref()
+        .ok_or_else(|| relay::AppError::InvalidTlsConfig("missing key_path".to_string()))?;
+
+    let cert = std::fs::read(cert_path).map_err(|source| relay::AppError::Io {
+        path: cert_path.to_string(),
+        source,
+    })?;
+    let key = std::fs::read(key_path).map_err(|source| relay::AppError::Io {
+        path: key_path.to_string(),
+        source,
+    })?;
+
+    let mut tls = ServerTlsConfig::new().identity(Identity::from_pem(cert, key));
+    if let Some(client_ca_path) = config.client_ca_path.as_deref() {
+        let client_ca = std::fs::read(client_ca_path).map_err(|source| relay::AppError::Io {
+            path: client_ca_path.to_string(),
+            source,
+        })?;
+        tls = tls.client_ca_root(tonic::transport::Certificate::from_pem(client_ca));
+    }
+
+    Ok(tls)
 }

@@ -4,6 +4,48 @@ relay:
   quic_address: 0.0.0.0:50052
   max_device_connections: 10000
   heartbeat_interval_seconds: 30
+  tls:
+    enabled: false
+    cert_path: certs/relay.crt
+    key_path: certs/relay.key
+  auth:
+    enabled: true
+    jwt:
+      enabled: true
+      hs256_secret: "dev-only-change-me"
+      issuer: "grpc-relay"
+      audience: "grpc-relay-controller"
+    # Controller token -> auth entry
+    # Used only when auth.jwt.enabled=false.
+    controller_tokens:
+      controller-token:
+        controller_id: "ctrl-1"
+        role: "operator"
+        allowed_project_ids: ["proj-1"]
+    # Device token -> auth entry
+    device_tokens:
+      device-token:
+        device_id: "device-001"
+        project_id: "proj-1"
+    # MVP method whitelist: empty = allow all (kept here explicit for demo)
+    method_whitelist:
+      - "svc.Device/Invoke"
+      - "ExecuteCommand"
+  stream:
+    idle_timeout_seconds: 300
+    max_active_streams: 10
+    max_concurrent_streams_per_controller: 100
+  rate_limiting:
+    device_requests_per_second: 1000
+    controller_requests_per_minute: 1000
+    global_requests_per_second: 100000
+    device_connection_per_minute: 10
+    global_connections_per_second: 100
+    device_bandwidth_bytes_per_sec: 10485760
+    controller_bandwidth_bytes_per_sec: 104857600
+    global_bandwidth_bytes_per_sec: 104857600
+    cpu_threshold_percent: 80.0
+    memory_threshold_mb: 12288
 
 observability:
   logging:
