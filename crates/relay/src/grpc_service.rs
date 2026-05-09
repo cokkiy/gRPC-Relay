@@ -123,6 +123,7 @@ impl RelayGrpcService {
                 match current_device_id.as_deref() {
                     Some(current_id) if current_id == dev_id.as_str() => {}
                     Some(current_id) => {
+                        security_metrics.record_auth_failure();
                         tracing::info!(
                             event = "auth_failure",
                             actor_type = "device",
@@ -134,6 +135,7 @@ impl RelayGrpcService {
                         break;
                     }
                     None => {
+                        security_metrics.record_auth_failure();
                         tracing::info!(
                             event = "auth_failure",
                             actor_type = "device",
@@ -239,6 +241,7 @@ impl RelayGrpcService {
                         .authenticate_device_by_token(&dev_id, &device_token)
                         .is_err()
                     {
+                        security_metrics.record_auth_failure();
                         tracing::info!(
                             event = "auth_failure",
                             actor_type = "device",
@@ -263,6 +266,7 @@ impl RelayGrpcService {
                 }
                 Some(device_message::Payload::Data(data_resp)) => {
                     let Some(response_device_id) = current_device_id.as_ref().cloned() else {
+                        security_metrics.record_auth_failure();
                         tracing::info!(
                             event = "auth_failure",
                             actor_type = "device",
@@ -1109,6 +1113,7 @@ mod tests {
         let (device_tx, mut device_stream, connection_id) =
             start_device_loop(&service, "dev-1").await;
         let (controller_tx, mut controller_stream) = start_controller_loop(&service).await;
+        let auth_failures_before = service.security_metrics.snapshot().auth_failure_total;
 
         controller_tx
             .send(Ok(controller_message("dev-1", 42, b"hello")))
@@ -1134,6 +1139,47 @@ mod tests {
         assert_eq!(response.device_id, "dev-1");
         assert_eq!(response.sequence_number, 42);
         assert_eq!(response.error, ErrorCode::DeviceOffline as i32);
+        assert!(service.security_metrics.snapshot().auth_failure_total > auth_failures_before);
+    }
+
+    #[tokio::test]
+    async fn device_stream_rejects_data_before_registration_and_records_auth_failure() {
+        let (service, _state) = service_with_state(test_config());
+        let (device_tx, device_rx) = mpsc::channel(16);
+        let (relay_tx, _relay_rx) = mpsc::channel(16);
+        let inbound = ReceiverStream::new(device_rx);
+
+        tokio::spawn(RelayGrpcService::run_device_connect_stream(
+            service.state.clone(),
+            service.session_registry.clone(),
+            service.stream_router.clone(),
+            service.auth_service.clone(),
+            service.security_metrics.clone(),
+            service.connection_limiter.clone(),
+            service.resource_monitor.clone(),
+            inbound,
+            relay_tx,
+        ));
+
+        let auth_failures_before = service.security_metrics.snapshot().auth_failure_total;
+
+        device_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-1".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Data(DataResponse {
+                    connection_id: "missing".into(),
+                    sequence_number: 1,
+                    encrypted_payload: b"no-register".to_vec(),
+                    error: ErrorCode::Ok as i32,
+                })),
+            }))
+            .await
+            .unwrap();
+        drop(device_tx);
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(service.security_metrics.snapshot().auth_failure_total > auth_failures_before);
     }
 
     #[tokio::test]
