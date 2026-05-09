@@ -1178,8 +1178,17 @@ mod tests {
             .unwrap();
         drop(device_tx);
 
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        assert!(service.security_metrics.snapshot().auth_failure_total > auth_failures_before);
+        let expected_auth_failures = auth_failures_before + 1;
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if service.security_metrics.snapshot().auth_failure_total >= expected_auth_failures {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("auth failure metric should be recorded");
     }
 
     #[tokio::test]
