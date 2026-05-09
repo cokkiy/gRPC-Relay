@@ -83,7 +83,7 @@ impl RateLimiter {
     fn maybe_cleanup(&self) {
         const CLEANUP_EVERY: usize = 256;
 
-        let count = self.cleanup_counter.fetch_add(1, Ordering::Relaxed);
+        let count = self.cleanup_counter.fetch_add(1, Ordering::Relaxed) + 1;
         if count % CLEANUP_EVERY as u64 != 0 {
             return;
         }
