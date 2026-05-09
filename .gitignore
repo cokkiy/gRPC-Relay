@@ -58,4 +58,4 @@ skills-lock.json
 .claude/
 AGENTS.md
 .vexp
-./github/copilot-instructions.md
+copilot-instructions.md
