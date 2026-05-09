@@ -6,6 +6,7 @@ service RelayService {
   rpc DeviceConnect(stream DeviceMessage) returns (stream RelayMessage);
   rpc ListOnlineDevices(ListOnlineDevicesRequest) returns (ListOnlineDevicesResponse);
   rpc ConnectToDevice(stream ControllerMessage) returns (stream DeviceResponse);
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
 }
 
 message DeviceMessage {
@@ -85,6 +86,24 @@ message ListOnlineDevicesRequest {
 
 message ListOnlineDevicesResponse {
   repeated DeviceInfo devices = 1;
+}
+
+enum TokenTargetType {
+  TOKEN_TARGET_TYPE_UNSPECIFIED = 0;
+  CONTROLLER = 1;
+  DEVICE = 2;
+}
+
+message RevokeTokenRequest {
+  string controller_id = 1;
+  string admin_token = 2;
+  TokenTargetType target_type = 3;
+  string target_token_hash_or_prefix = 4;
+  string reason = 5;
+}
+
+message RevokeTokenResponse {
+  bool revoked = 1;
 }
 
 message DeviceInfo {

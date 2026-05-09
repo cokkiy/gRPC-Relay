@@ -5,6 +5,7 @@ use crate::list::DeviceInfoExt;
 use crate::Result;
 use relay_proto::relay::v1::{
     relay_service_client::RelayServiceClient, DeviceInfo, ListOnlineDevicesRequest,
+    RevokeTokenRequest, TokenTargetType,
 };
 use tonic::transport::Endpoint;
 use tonic::Request;
@@ -70,6 +71,36 @@ impl ControllerClient {
         };
 
         ControllerConnectSession::connect(opts).await
+    }
+
+    pub async fn revoke_token(
+        &self,
+        target_type: TokenTargetType,
+        target_token_hash_or_prefix: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<bool> {
+        let endpoint = Endpoint::from_shared(self.config.normalized_endpoint()?)
+            .map_err(ControllerSdkError::Transport)?;
+        let channel = endpoint
+            .connect()
+            .await
+            .map_err(ControllerSdkError::Transport)?;
+
+        let mut client = RelayServiceClient::new(channel);
+        let req = RevokeTokenRequest {
+            controller_id: self.config.controller_id.clone(),
+            admin_token: self.config.token_provider().token()?,
+            target_type: target_type as i32,
+            target_token_hash_or_prefix: target_token_hash_or_prefix.into(),
+            reason: reason.into(),
+        };
+
+        let resp = client
+            .revoke_token(Request::new(req))
+            .await
+            .map_err(ControllerSdkError::Grpc)?;
+
+        Ok(resp.into_inner().revoked)
     }
 }
 
