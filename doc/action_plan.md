@@ -167,29 +167,29 @@
 - 安全意义：基础重放防护 + 传输重试幂等
 
 7. **限流（基础 DDoS 防护，应用层）**
-	- 限流位置：认证/授权通过之后、转发之前
-	- **请求速率（token bucket）**：
-	  - per-device：1,000 req/s
-	  - per-controller：1,000 req/min
-	  - global：100,000 req/s
-	- **连接速率（sliding window）**：
-	  - per-device：10 conn/min
-	  - global：100 conn/s
-	- **并发流限制**：
-	  - per-device：10 concurrent streams
-	  - per-controller：100 concurrent streams
-	- **带宽限制（rotating 1s window）**：
-	  - per-device：10 MB/s
-	  - per-controller：100 MB/s
-	  - global：100 MB/s（~800 Mbps）
-	- **资源阈值**：
-	  - CPU: 80%（超出拒绝新连接）
-	  - Memory: 12 GB（超出拒绝新连接）
-	- 返回语义：
-	  - `ConnectToDevice`：`DeviceResponse.error = RATE_LIMITED`
-	  - `ListOnlineDevices`：gRPC Status `RESOURCE_EXHAUSTED`
-	  - `DeviceConnect`：gRPC Status `RESOURCE_EXHAUSTED`
-	- 审计事件：`rate_limit`（token 脱敏）
+    - 限流位置：认证/授权通过之后、转发之前
+    - **请求速率（token bucket）**：
+      - per-device：1,000 req/s
+      - per-controller：1,000 req/min
+      - global：100,000 req/s
+    - **连接速率（sliding window）**：
+      - per-device：10 conn/min
+      - global：100 conn/s
+    - **并发流限制**：
+      - per-device：10 concurrent streams
+      - per-controller：100 concurrent streams
+    - **带宽限制（rotating 1s window）**：
+      - per-device：10 MB/s
+      - per-controller：100 MB/s
+      - global：100 MB/s（~800 Mbps）
+    - **资源阈值**：
+      - CPU: 80%（超出拒绝新连接）
+      - Memory: 12 GB（超出拒绝新连接）
+    - 返回语义：
+      - `ConnectToDevice`：`DeviceResponse.error = RATE_LIMITED`
+      - `ListOnlineDevices`：gRPC Status `RESOURCE_EXHAUSTED`
+      - `DeviceConnect`：gRPC Status `RESOURCE_EXHAUSTED`
+    - 审计事件：`rate_limit`（token 脱敏）
 
 8. **审计日志与 tracing（可追溯、可脱敏）**
 - MVP 审计事件落地（至少）：
