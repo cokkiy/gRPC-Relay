@@ -107,7 +107,9 @@ impl RelayGrpcService {
             };
             let dev_id = dev_msg.device_id.clone();
             let device_token = dev_msg.token.clone();
-            if !matches!(dev_msg.payload, Some(device_message::Payload::Register(_))) {
+            let is_register_message =
+                matches!(dev_msg.payload, Some(device_message::Payload::Register(_)));
+            if !is_register_message {
                 match current_device_id.as_deref() {
                     Some(current_id) if current_id == dev_id.as_str() => {}
                     Some(current_id) => {
@@ -227,10 +229,16 @@ impl RelayGrpcService {
                     let _ = out_tx.send(Ok(resp)).await;
                 }
                 Some(device_message::Payload::Data(data_resp)) => {
-                    let response_device_id = current_device_id
-                        .as_ref()
-                        .cloned()
-                        .unwrap_or_else(|| dev_id.clone());
+                    let Some(response_device_id) = current_device_id.as_ref().cloned() else {
+                        tracing::info!(
+                            event = "auth_failure",
+                            actor_type = "device",
+                            device_id = %dev_id,
+                            token_prefix = %AuthService::token_prefix(&device_token),
+                            reason = "data_before_registration"
+                        );
+                        break;
+                    };
                     if let Some(inflight) =
                         state.take_inflight(&response_device_id, data_resp.sequence_number)
                     {
