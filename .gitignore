@@ -56,3 +56,5 @@ local.settings.json
 .agents/
 skills-lock.json
 .claude/
+AGENTS.md
+.vexp
