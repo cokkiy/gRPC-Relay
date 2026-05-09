@@ -1,6 +1,9 @@
+use crate::auth::AuthService;
 use crate::config::AppConfig;
 use crate::idempotency::IdempotencyCache;
 use crate::rate_limiter::RateLimiter;
+use crate::rbac::{AuthorizationError, RbacPolicyEngine};
+use crate::security_metrics::SecurityMetrics;
 use crate::session::SessionRegistry;
 use crate::state::{
     device_response_from_device_data, relay_message_data_request, relay_message_heartbeat_response,
@@ -11,7 +14,8 @@ use crate::validator;
 use relay_proto::relay::v1::relay_service_server::RelayService;
 use relay_proto::relay::v1::{
     device_message, ControllerMessage, DeviceMessage, DeviceResponse, ErrorCode,
-    ListOnlineDevicesRequest, ListOnlineDevicesResponse, RelayMessage,
+    ListOnlineDevicesRequest, ListOnlineDevicesResponse, RelayMessage, RevokeTokenRequest,
+    RevokeTokenResponse, TokenTargetType,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,10 +36,20 @@ pub struct RelayGrpcService {
     stream_router: StreamRouter,
     session_registry: SessionRegistry,
     inflight_timeout: Duration,
+    auth_service: AuthService,
+    rbac: RbacPolicyEngine,
+    security_metrics: SecurityMetrics,
 }
 
 impl RelayGrpcService {
-    pub fn new(state: Arc<RelayState>, config: &AppConfig) -> Self {
+    pub fn new(
+        state: Arc<RelayState>,
+        config: &AppConfig,
+        security_metrics: SecurityMetrics,
+    ) -> Self {
+        let auth_service = AuthService::new(&config.relay.auth);
+        let rbac = RbacPolicyEngine::new(&config.relay.auth);
+
         Self {
             idempotency_cache: IdempotencyCache::new(
                 config.relay.idempotency.cache_capacity,
@@ -47,6 +61,9 @@ impl RelayGrpcService {
             inflight_timeout: Duration::from_secs(60),
             state,
             relay_address: config.relay.address.clone(),
+            auth_service,
+            rbac,
+            security_metrics,
         }
     }
 
@@ -75,6 +92,8 @@ impl RelayGrpcService {
         state: Arc<RelayState>,
         session_registry: SessionRegistry,
         stream_router: StreamRouter,
+        auth_service: AuthService,
+        security_metrics: SecurityMetrics,
         mut inbound: S,
         out_tx: mpsc::Sender<Result<RelayMessage, Status>>,
     ) where
@@ -87,10 +106,35 @@ impl RelayGrpcService {
                 break;
             };
             let dev_id = dev_msg.device_id.clone();
+            let device_token = dev_msg.token.clone();
 
             match dev_msg.payload {
                 Some(device_message::Payload::Register(register_req)) => {
-                    current_device_id = Some(dev_id.clone());
+                    // Device authentication (MVP token-based)
+                    match auth_service.authenticate_device_by_token(&dev_id, &device_token) {
+                        Ok(_principal) => {
+                            security_metrics.record_auth_success();
+                            tracing::info!(
+                                event = "auth_success",
+                                actor_type = "device",
+                                device_id = %dev_id,
+                                token_prefix = %AuthService::token_prefix(&device_token),
+                                reason = "device_token_ok"
+                            );
+                            current_device_id = Some(dev_id.clone());
+                        }
+                        Err(_) => {
+                            security_metrics.record_auth_failure();
+                            tracing::info!(
+                                event = "auth_failure",
+                                actor_type = "device",
+                                device_id = %dev_id,
+                                token_prefix = %AuthService::token_prefix(&device_token),
+                                reason = "invalid_device_token"
+                            );
+                            break;
+                        }
+                    }
 
                     let connection_id = state.next_connection_id();
                     let previous_connection_id = register_req.previous_connection_id.clone();
@@ -129,6 +173,32 @@ impl RelayGrpcService {
                     let _ = out_tx.send(Ok(resp)).await;
                 }
                 Some(device_message::Payload::Heartbeat(_hb)) => {
+                    // Heartbeat authentication (MVP: re-check token matches device_id)
+                    if current_device_id.as_deref() == Some(dev_id.as_str()) {
+                        if auth_service
+                            .authenticate_device_by_token(&dev_id, &device_token)
+                            .is_err()
+                        {
+                            tracing::info!(
+                                event = "auth_failure",
+                                actor_type = "device",
+                                device_id = %dev_id,
+                                token_prefix = %AuthService::token_prefix(&device_token),
+                                reason = "invalid_device_token_on_heartbeat"
+                            );
+                            break;
+                        } else {
+                            security_metrics.record_auth_success();
+                            tracing::info!(
+                                event = "auth_success",
+                                actor_type = "device",
+                                device_id = %dev_id,
+                                token_prefix = %AuthService::token_prefix(&device_token),
+                                reason = "device_token_ok_on_heartbeat"
+                            );
+                        }
+                    }
+
                     let resp = relay_message_heartbeat_response();
                     let _ = out_tx.send(Ok(resp)).await;
                 }
@@ -184,6 +254,9 @@ impl RelayGrpcService {
         session_registry: SessionRegistry,
         state: Arc<RelayState>,
         inflight_timeout: Duration,
+        auth_service: AuthService,
+        rbac: RbacPolicyEngine,
+        security_metrics: SecurityMetrics,
         mut inbound: S,
         out_tx: mpsc::Sender<Result<DeviceResponse, Status>>,
     ) where
@@ -210,12 +283,117 @@ impl RelayGrpcService {
                 continue;
             }
 
-            if !rate_limiter.allow(device_id, &msg.controller_id) {
-                send_error_response(&out_tx, device_id, seq, ErrorCode::RateLimited).await;
+            if msg.token.trim().is_empty() {
+                security_metrics.record_auth_failure();
+                tracing::info!(
+                    event = "auth_failure",
+                    actor_type = "controller",
+                    controller_id = %msg.controller_id,
+                    device_id = %msg.target_device_id,
+                    token_prefix = "",
+                    reason = "token_missing"
+                );
+                send_error_response(&out_tx, device_id, seq, ErrorCode::Unauthorized).await;
                 continue;
             }
 
+            // MVP: 认证/授权在“创建 stream mapping”时检查一次（避免每条消息重复开销）
             if stream_id.is_none() {
+                tracing::info!(
+                    event = "controller_request",
+                    actor_type = "controller",
+                    controller_id = %msg.controller_id,
+                    device_id = %msg.target_device_id,
+                    method_name = %msg.method_name,
+                    sequence_number = %msg.sequence_number,
+                    token_prefix = %AuthService::token_prefix(&msg.token),
+                    stage = "auth_verify"
+                );
+
+                let controller = match auth_service
+                    .authenticate_controller(&msg.controller_id, &msg.token)
+                {
+                    Ok(p) => {
+                        security_metrics.record_auth_success();
+                        tracing::info!(
+                            event = "auth_success",
+                            actor_type = "controller",
+                            controller_id = %msg.controller_id,
+                            device_id = %msg.target_device_id,
+                            role = %p.role,
+                            token_prefix = %AuthService::token_prefix(&msg.token),
+                            reason = "controller_token_ok"
+                        );
+                        p
+                    }
+                    Err(_) => {
+                        security_metrics.record_auth_failure();
+                        tracing::info!(
+                            event = "auth_failure",
+                            actor_type = "controller",
+                            controller_id = %msg.controller_id,
+                            device_id = %msg.target_device_id,
+                            token_prefix = %AuthService::token_prefix(&msg.token),
+                            reason = "invalid_controller_token"
+                        );
+                        send_error_response(&out_tx, device_id, seq, ErrorCode::Unauthorized).await;
+                        continue;
+                    }
+                };
+
+                let device = match auth_service.get_device_principal_by_id(device_id) {
+                    Ok(p) => p,
+                    Err(_) => {
+                        send_error_response(&out_tx, device_id, seq, ErrorCode::DeviceNotFound)
+                            .await;
+                        continue;
+                    }
+                };
+
+                if let Err(
+                    AuthorizationError::DeviceProjectForbidden
+                    | AuthorizationError::MethodNotAllowed,
+                ) = rbac.authorize_controller_to_device(&controller, &device, &msg.method_name)
+                {
+                    security_metrics.record_authorization_denied();
+                    tracing::info!(
+                        event = "authorization_denied",
+                        actor_type = "controller",
+                        controller_id = %msg.controller_id,
+                        device_id = %msg.target_device_id,
+                        method_name = %msg.method_name,
+                        token_prefix = %AuthService::token_prefix(&msg.token),
+                        reason = "rbac_or_method_denied"
+                    );
+                    send_error_response(&out_tx, device_id, seq, ErrorCode::Unauthorized).await;
+                    continue;
+                }
+
+                tracing::info!(
+                    event = "controller_request_to_device",
+                    actor_type = "controller",
+                    controller_id = %msg.controller_id,
+                    device_id = %msg.target_device_id,
+                    method_name = %msg.method_name,
+                    sequence_number = %msg.sequence_number,
+                    token_prefix = %AuthService::token_prefix(&msg.token),
+                    stage = "permission_check"
+                );
+
+                if !rate_limiter.allow(device_id, &msg.controller_id) {
+                    security_metrics.record_rate_limit();
+                    tracing::info!(
+                        event = "rate_limit",
+                        actor_type = "controller",
+                        controller_id = %msg.controller_id,
+                        device_id = %msg.target_device_id,
+                        method_name = %msg.method_name,
+                        token_prefix = %AuthService::token_prefix(&msg.token)
+                    );
+                    send_error_response(&out_tx, device_id, seq, ErrorCode::RateLimited).await;
+                    continue;
+                }
+
                 match router.create_mapping(
                     msg.target_device_id.clone(),
                     msg.controller_id.clone(),
@@ -298,6 +476,16 @@ impl RelayGrpcService {
                     msg.encrypted_payload.clone(),
                 );
 
+                tracing::info!(
+                    event = "controller_request_to_device",
+                    actor_type = "controller",
+                    controller_id = %msg.controller_id,
+                    device_id = %msg.target_device_id,
+                    method_name = %msg.method_name,
+                    sequence_number = %msg.sequence_number,
+                    stage = "relay_forward"
+                );
+
                 if device_session
                     .outbound_tx
                     .send(Ok(relay_req))
@@ -322,6 +510,16 @@ impl RelayGrpcService {
                         .insert(device_id, msg.sequence_number, resp.clone())
                         .await;
                 }
+                tracing::info!(
+                    event = "controller_request_to_device",
+                    actor_type = "controller",
+                    controller_id = %msg.controller_id,
+                    device_id = %msg.target_device_id,
+                    method_name = %msg.method_name,
+                    sequence_number = %msg.sequence_number,
+                    stage = "relay_response"
+                );
+
                 if let Some(ref sid) = stream_id {
                     router.finish_request(sid);
                 }
@@ -343,10 +541,12 @@ impl RelayGrpcService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::ControllerClaims;
     use crate::config::{
-        AppConfig, HealthConfig, IdempotencyConfig, LoggingConfig, ObservabilityConfig,
-        RateLimitConfig, RelayConfig, StreamConfig,
+        AppConfig, AuthConfig, HealthConfig, IdempotencyConfig, JwtConfig, LoggingConfig,
+        ObservabilityConfig, RateLimitConfig, RelayConfig, StreamConfig,
     };
+    use jsonwebtoken::{encode, EncodingKey, Header};
     use relay_proto::relay::v1::relay_message;
     use relay_proto::relay::v1::{DataResponse, RegisterRequest};
     use tokio::sync::mpsc;
@@ -373,6 +573,8 @@ mod tests {
                     cache_capacity: 10_000,
                     cache_ttl_seconds: 3_600,
                 },
+                auth: Default::default(),
+                tls: Default::default(),
             },
             observability: ObservabilityConfig {
                 logging: LoggingConfig {
@@ -390,7 +592,11 @@ mod tests {
 
     fn service_with_state(config: AppConfig) -> (RelayGrpcService, Arc<RelayState>) {
         let state = Arc::new(RelayState::new());
-        let service = RelayGrpcService::new(state.clone(), &config);
+        let service = RelayGrpcService::new(
+            state.clone(),
+            &config,
+            crate::security_metrics::SecurityMetrics::default(),
+        );
         (service, state)
     }
 
@@ -424,6 +630,8 @@ mod tests {
             service.state.clone(),
             service.session_registry.clone(),
             service.stream_router.clone(),
+            service.auth_service.clone(),
+            service.security_metrics.clone(),
             inbound,
             relay_tx,
         ));
@@ -469,6 +677,9 @@ mod tests {
             service.session_registry.clone(),
             service.state.clone(),
             service.inflight_timeout,
+            service.auth_service.clone(),
+            service.rbac.clone(),
+            service.security_metrics.clone(),
             inbound,
             response_tx,
         ));
@@ -821,6 +1032,418 @@ mod tests {
 
         drop(first_device_tx);
     }
+
+    fn test_config_with_auth_enabled() -> AppConfig {
+        use crate::config::{ControllerAuthEntry, DeviceAuthEntry};
+
+        let mut controller_tokens = std::collections::HashMap::new();
+        controller_tokens.insert(
+            "controller-token".to_string(),
+            ControllerAuthEntry {
+                controller_id: "ctrl-1".to_string(),
+                role: "operator".to_string(),
+                allowed_project_ids: vec!["proj-1".to_string()],
+            },
+        );
+
+        let mut device_tokens = std::collections::HashMap::new();
+        device_tokens.insert(
+            "device-token".to_string(),
+            DeviceAuthEntry {
+                device_id: "dev-1".to_string(),
+                project_id: "proj-1".to_string(),
+            },
+        );
+
+        // dev-2 也需要配置，才能通过 device_principal 查询
+        device_tokens.insert(
+            "device-token-dev2".to_string(),
+            DeviceAuthEntry {
+                device_id: "dev-2".to_string(),
+                project_id: "proj-2".to_string(),
+            },
+        );
+
+        AppConfig {
+            relay: RelayConfig {
+                id: "relay-test".into(),
+                address: "127.0.0.1:50051".into(),
+                quic_address: "127.0.1:50052".into(),
+                max_device_connections: 1_000,
+                heartbeat_interval_seconds: 30,
+                stream: StreamConfig {
+                    idle_timeout_seconds: 60,
+                    max_active_streams: 100,
+                },
+                rate_limiting: RateLimitConfig {
+                    device_requests_per_second: 100,
+                    controller_requests_per_second: 100,
+                    global_requests_per_second: 1_000,
+                },
+                idempotency: IdempotencyConfig {
+                    cache_capacity: 10_000,
+                    cache_ttl_seconds: 3_600,
+                },
+                auth: AuthConfig {
+                    enabled: true,
+                    controller_tokens,
+                    device_tokens,
+                    method_whitelist: vec!["svc.Device/Invoke".to_string()],
+                    jwt: JwtConfig {
+                        enabled: true,
+                        hs256_secret: "test-secret".to_string(),
+                        issuer: Some("grpc-relay-test".to_string()),
+                        audience: Some("controller-test".to_string()),
+                        clock_skew_seconds: 30,
+                    },
+                },
+                tls: Default::default(),
+            },
+            observability: ObservabilityConfig {
+                logging: LoggingConfig {
+                    level: "info".into(),
+                    format: "json".into(),
+                },
+                health: HealthConfig {
+                    enabled: false,
+                    address: "127.0.0.1:0".into(),
+                    path: "/health".into(),
+                },
+            },
+        }
+    }
+
+    fn controller_jwt(role: &str, allowed_project_ids: Vec<&str>) -> String {
+        let claims = ControllerClaims {
+            sub: "ctrl-1".to_string(),
+            controller_id: "ctrl-1".to_string(),
+            role: role.to_string(),
+            allowed_project_ids: allowed_project_ids
+                .into_iter()
+                .map(ToString::to_string)
+                .collect(),
+            exp: 4_102_444_800,
+            iss: Some("grpc-relay-test".to_string()),
+            aud: Some("controller-test".to_string()),
+        };
+
+        encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(b"test-secret"),
+        )
+        .unwrap()
+    }
+
+    fn operator_jwt() -> String {
+        controller_jwt("operator", vec!["proj-1"])
+    }
+
+    fn admin_jwt() -> String {
+        controller_jwt("admin", Vec::new())
+    }
+
+    fn controller_message_with_token(
+        device_id: &str,
+        seq: i64,
+        token: &str,
+        method_name: &str,
+    ) -> ControllerMessage {
+        ControllerMessage {
+            controller_id: "ctrl-1".into(),
+            token: token.into(),
+            target_device_id: device_id.into(),
+            method_name: method_name.to_string(),
+            sequence_number: seq,
+            encrypted_payload: b"payload".to_vec(),
+        }
+    }
+
+    async fn start_device_loop_with_token(
+        service: &RelayGrpcService,
+        device_id: &str,
+        token: &str,
+    ) -> (
+        mpsc::Sender<Result<DeviceMessage, Status>>,
+        mpsc::Receiver<Result<RelayMessage, Status>>,
+        String,
+    ) {
+        let (device_tx, device_rx) = mpsc::channel(16);
+        let (relay_tx, relay_rx) = mpsc::channel(16);
+        let inbound = ReceiverStream::new(device_rx);
+        tokio::spawn(RelayGrpcService::run_device_connect_stream(
+            service.state.clone(),
+            service.session_registry.clone(),
+            service.stream_router.clone(),
+            service.auth_service.clone(),
+            service.security_metrics.clone(),
+            inbound,
+            relay_tx,
+        ));
+
+        device_tx
+            .send(Ok(DeviceMessage {
+                device_id: device_id.to_string(),
+                token: token.to_string(),
+                payload: Some(device_message::Payload::Register(RegisterRequest {
+                    device_id: device_id.to_string(),
+                    metadata: Default::default(),
+                    previous_connection_id: "".to_string(),
+                })),
+            }))
+            .await
+            .unwrap();
+
+        let mut relay_rx = relay_rx;
+        let register = relay_rx.recv().await.unwrap().unwrap();
+        let (connection_id, _session_resumed) = match register.payload.unwrap() {
+            relay_message::Payload::RegisterResponse(resp) => {
+                (resp.connection_id, resp.session_resumed)
+            }
+            other => panic!("unexpected register response: {other:?}"),
+        };
+
+        (device_tx, relay_rx, connection_id)
+    }
+
+    #[tokio::test]
+    async fn connect_to_device_rejects_invalid_controller_token() {
+        let (service, _state) = service_with_state(test_config_with_auth_enabled());
+        let (device_tx, _device_stream, _connection_id) =
+            start_device_loop_with_token(&service, "dev-1", "device-token").await;
+        let (controller_tx, mut controller_stream) = start_controller_loop(&service).await;
+
+        // invalid controller token
+        controller_tx
+            .send(Ok(controller_message_with_token(
+                "dev-1",
+                1,
+                "bad-token",
+                "svc.Device/Invoke",
+            )))
+            .await
+            .unwrap();
+
+        let resp = controller_stream.recv().await.unwrap().unwrap();
+        assert_eq!(resp.device_id, "dev-1");
+        assert_eq!(resp.sequence_number, 1);
+        assert_eq!(resp.error, ErrorCode::Unauthorized as i32);
+
+        drop(device_tx);
+    }
+
+    #[tokio::test]
+    async fn connect_to_device_rejects_method_not_in_whitelist() {
+        let mut cfg = test_config_with_auth_enabled();
+        cfg.relay.auth.method_whitelist = vec!["svc.Device/Other".to_string()];
+
+        let (service, _state) = service_with_state(cfg);
+        let (device_tx, _device_stream, _connection_id) =
+            start_device_loop_with_token(&service, "dev-1", "device-token").await;
+        let (controller_tx, mut controller_stream) = start_controller_loop(&service).await;
+        let token = operator_jwt();
+
+        controller_tx
+            .send(Ok(controller_message_with_token(
+                "dev-1",
+                1,
+                &token,
+                "svc.Device/Invoke",
+            )))
+            .await
+            .unwrap();
+
+        let resp = controller_stream.recv().await.unwrap().unwrap();
+        assert_eq!(resp.device_id, "dev-1");
+        assert_eq!(resp.sequence_number, 1);
+        assert_eq!(resp.error, ErrorCode::Unauthorized as i32);
+
+        drop(device_tx);
+    }
+
+    #[tokio::test]
+    async fn connect_to_device_rejects_project_forbidden() {
+        let mut cfg = test_config_with_auth_enabled();
+        // operator can only access proj-2, but dev-1 is proj-1
+        if let Some(entry) = cfg.relay.auth.controller_tokens.get_mut("controller-token") {
+            entry.allowed_project_ids = vec!["proj-2".to_string()];
+        }
+
+        let (service, _state) = service_with_state(cfg);
+        let (device_tx, _device_stream, _connection_id) =
+            start_device_loop_with_token(&service, "dev-1", "device-token").await;
+        let (controller_tx, mut controller_stream) = start_controller_loop(&service).await;
+        let token = controller_jwt("operator", vec!["proj-2"]);
+
+        controller_tx
+            .send(Ok(controller_message_with_token(
+                "dev-1",
+                1,
+                &token,
+                "svc.Device/Invoke",
+            )))
+            .await
+            .unwrap();
+
+        let resp = controller_stream.recv().await.unwrap().unwrap();
+        assert_eq!(resp.device_id, "dev-1");
+        assert_eq!(resp.sequence_number, 1);
+        assert_eq!(resp.error, ErrorCode::Unauthorized as i32);
+
+        drop(device_tx);
+    }
+
+    #[tokio::test]
+    async fn list_online_devices_filters_by_project_for_non_admin() {
+        let (service, _state) = service_with_state(test_config_with_auth_enabled());
+        // dev-1 => proj-1, dev-2 => proj-2, controller operator => allowed_project_ids: proj-1 only
+
+        let (_dev1_tx, _dev1_stream, _conn1) =
+            start_device_loop_with_token(&service, "dev-1", "device-token").await;
+        let (_dev2_tx, _dev2_stream, _conn2) =
+            start_device_loop_with_token(&service, "dev-2", "device-token-dev2").await;
+        let token = operator_jwt();
+
+        let resp = service
+            .list_online_devices(Request::new(ListOnlineDevicesRequest {
+                controller_id: "ctrl-1".into(),
+                token,
+                region_filter: String::new(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(resp.devices.len(), 1);
+        assert_eq!(resp.devices[0].device_id, "dev-1");
+    }
+
+    #[tokio::test]
+    async fn connect_to_device_accepts_valid_controller_jwt() {
+        let (service, _state) = service_with_state(test_config_with_auth_enabled());
+        let (device_tx, mut device_stream, connection_id) =
+            start_device_loop_with_token(&service, "dev-1", "device-token").await;
+        let (controller_tx, mut controller_stream) = start_controller_loop(&service).await;
+        let token = operator_jwt();
+
+        controller_tx
+            .send(Ok(controller_message_with_token(
+                "dev-1",
+                31,
+                &token,
+                "svc.Device/Invoke",
+            )))
+            .await
+            .unwrap();
+
+        let forwarded = device_stream.recv().await.unwrap().unwrap();
+        match forwarded.payload.unwrap() {
+            relay_message::Payload::DataRequest(req) => {
+                assert_eq!(req.sequence_number, 31);
+            }
+            other => panic!("unexpected relay payload: {other:?}"),
+        }
+
+        device_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-1".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Data(DataResponse {
+                    connection_id,
+                    sequence_number: 31,
+                    encrypted_payload: b"jwt-ok".to_vec(),
+                    error: ErrorCode::Ok as i32,
+                })),
+            }))
+            .await
+            .unwrap();
+
+        let resp = controller_stream.recv().await.unwrap().unwrap();
+        assert_eq!(resp.error, ErrorCode::Ok as i32);
+        assert_eq!(resp.encrypted_payload, b"jwt-ok");
+    }
+
+    #[tokio::test]
+    async fn list_online_devices_returns_resource_exhausted_when_limited() {
+        let mut cfg = test_config_with_auth_enabled();
+        cfg.relay.rate_limiting.controller_requests_per_second = 1;
+        cfg.relay.rate_limiting.global_requests_per_second = 100;
+        let (service, _state) = service_with_state(cfg);
+        let token = operator_jwt();
+
+        service
+            .list_online_devices(Request::new(ListOnlineDevicesRequest {
+                controller_id: "ctrl-1".into(),
+                token: token.clone(),
+                region_filter: String::new(),
+            }))
+            .await
+            .unwrap();
+
+        let err = service
+            .list_online_devices(Request::new(ListOnlineDevicesRequest {
+                controller_id: "ctrl-1".into(),
+                token,
+                region_filter: String::new(),
+            }))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::ResourceExhausted);
+    }
+
+    #[tokio::test]
+    async fn admin_can_revoke_controller_token_and_metrics_increment() {
+        let (service, _state) = service_with_state(test_config_with_auth_enabled());
+        let admin_token = admin_jwt();
+        let operator_token = operator_jwt();
+
+        let response = service
+            .revoke_token(Request::new(RevokeTokenRequest {
+                controller_id: "ctrl-1".into(),
+                admin_token,
+                target_type: TokenTargetType::Controller as i32,
+                target_token_hash_or_prefix: operator_token.chars().take(16).collect(),
+                reason: "test".into(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(response.revoked);
+
+        let err = service
+            .list_online_devices(Request::new(ListOnlineDevicesRequest {
+                controller_id: "ctrl-1".into(),
+                token: operator_token,
+                region_filter: String::new(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), tonic::Code::Unauthenticated);
+
+        let snapshot = service.security_metrics.snapshot();
+        assert_eq!(snapshot.revoked_tokens_total, 1);
+        assert!(snapshot.auth_failure_total >= 1);
+    }
+
+    #[tokio::test]
+    async fn non_admin_cannot_revoke_token() {
+        let (service, _state) = service_with_state(test_config_with_auth_enabled());
+        let operator_token = operator_jwt();
+
+        let err = service
+            .revoke_token(Request::new(RevokeTokenRequest {
+                controller_id: "ctrl-1".into(),
+                admin_token: operator_token,
+                target_type: TokenTargetType::Controller as i32,
+                target_token_hash_or_prefix: "anything".into(),
+                reason: "test".into(),
+            }))
+            .await
+            .unwrap_err();
+
+        assert_eq!(err.code(), tonic::Code::PermissionDenied);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -873,11 +1496,15 @@ impl RelayService for RelayGrpcService {
         let state = self.state.clone();
         let session_registry = self.session_registry.clone();
         let stream_router = self.stream_router.clone();
+        let auth_service = self.auth_service.clone();
+        let security_metrics = self.security_metrics.clone();
         tokio::spawn(async move {
             Self::run_device_connect_stream(
                 state,
                 session_registry,
                 stream_router,
+                auth_service,
+                security_metrics,
                 inbound,
                 out_tx,
             )
@@ -889,11 +1516,80 @@ impl RelayService for RelayGrpcService {
 
     async fn list_online_devices(
         &self,
-        _request: Request<ListOnlineDevicesRequest>,
+        request: Request<ListOnlineDevicesRequest>,
     ) -> std::result::Result<Response<ListOnlineDevicesResponse>, Status> {
-        let devices = self
+        let req = request.into_inner();
+
+        if req.controller_id.trim().is_empty() || req.token.trim().is_empty() {
+            self.security_metrics.record_auth_failure();
+            return Err(Status::unauthenticated("missing controller_id or token"));
+        }
+
+        let principal = self
+            .auth_service
+            .authenticate_controller(&req.controller_id, &req.token)
+            .map_err(|_| {
+                self.security_metrics.record_auth_failure();
+                Status::unauthenticated("invalid controller token")
+            })?;
+        self.security_metrics.record_auth_success();
+
+        if !self.rate_limiter.allow("*", &req.controller_id) {
+            self.security_metrics.record_rate_limit();
+            tracing::info!(
+                event = "rate_limit",
+                actor_type = "controller",
+                controller_id = %req.controller_id,
+                device_id = "*",
+                token_prefix = %AuthService::token_prefix(&req.token)
+            );
+            return Err(Status::resource_exhausted("rate limited"));
+        }
+
+        let all_devices = self
             .session_registry
             .list_online_devices(&self.relay_address);
+
+        // Role-based filtering
+        let devices = all_devices
+            .into_iter()
+            .filter(|d| {
+                // region filter (MVP: match metadata["region"])
+                if !req.region_filter.trim().is_empty() {
+                    let region = d.metadata.get("region").map(|s| s.as_str()).unwrap_or("");
+                    if region != req.region_filter.as_str() {
+                        return false;
+                    }
+                }
+
+                if principal.role == "admin" {
+                    return true;
+                }
+
+                // Controller allowed projects
+                // (If a device is not in AuthConfig, skip it)
+                let device_principal = self
+                    .auth_service
+                    .get_device_principal_by_id(&d.device_id)
+                    .ok();
+
+                let device_principal = match device_principal {
+                    Some(p) => p,
+                    None => return false,
+                };
+
+                principal
+                    .allowed_project_ids
+                    .iter()
+                    .any(|pid| pid == &device_principal.project_id)
+            })
+            .collect::<Vec<_>>();
+
+        // If controller is non-admin but has no allowed projects, treat as permission denied (MVP)
+        if principal.role != "admin" && principal.allowed_project_ids.is_empty() {
+            self.security_metrics.record_authorization_denied();
+            return Err(Status::permission_denied("no project permissions"));
+        }
 
         info!(
             list_online_devices_called = true,
@@ -920,6 +1616,10 @@ impl RelayService for RelayGrpcService {
         let state = self.state.clone();
         let inflight_timeout = self.inflight_timeout;
 
+        let auth_service = self.auth_service.clone();
+        let rbac = self.rbac.clone();
+        let security_metrics = self.security_metrics.clone();
+
         tokio::spawn(async move {
             Self::run_connect_to_device_stream(
                 router,
@@ -928,6 +1628,9 @@ impl RelayService for RelayGrpcService {
                 session_registry,
                 state,
                 inflight_timeout,
+                auth_service,
+                rbac,
+                security_metrics,
                 inbound,
                 out_tx,
             )
@@ -935,5 +1638,64 @@ impl RelayService for RelayGrpcService {
         });
 
         Ok(Response::new(out_stream))
+    }
+
+    async fn revoke_token(
+        &self,
+        request: Request<RevokeTokenRequest>,
+    ) -> std::result::Result<Response<RevokeTokenResponse>, Status> {
+        let req = request.into_inner();
+
+        if req.controller_id.trim().is_empty() || req.admin_token.trim().is_empty() {
+            self.security_metrics.record_auth_failure();
+            return Err(Status::unauthenticated("missing controller_id or token"));
+        }
+        if req.target_token_hash_or_prefix.trim().is_empty() {
+            return Err(Status::invalid_argument(
+                "missing target_token_hash_or_prefix",
+            ));
+        }
+
+        let principal = self
+            .auth_service
+            .authenticate_controller(&req.controller_id, &req.admin_token)
+            .map_err(|_| {
+                self.security_metrics.record_auth_failure();
+                Status::unauthenticated("invalid controller token")
+            })?;
+        self.security_metrics.record_auth_success();
+
+        if principal.role != "admin" {
+            self.security_metrics.record_authorization_denied();
+            tracing::info!(
+                event = "authorization_denied",
+                actor_type = "controller",
+                controller_id = %req.controller_id,
+                reason = "revoke_requires_admin"
+            );
+            return Err(Status::permission_denied("admin role required"));
+        }
+
+        match TokenTargetType::try_from(req.target_type) {
+            Ok(TokenTargetType::Controller) => self
+                .auth_service
+                .revoke_controller_token(&req.target_token_hash_or_prefix),
+            Ok(TokenTargetType::Device) => self
+                .auth_service
+                .revoke_device_token(&req.target_token_hash_or_prefix),
+            _ => return Err(Status::invalid_argument("invalid target_type")),
+        }
+
+        self.security_metrics.record_revoked_token();
+        tracing::info!(
+            event = "token_revoked",
+            actor_type = "controller",
+            controller_id = %req.controller_id,
+            target_type = req.target_type,
+            token_prefix = %req.target_token_hash_or_prefix,
+            reason = %req.reason
+        );
+
+        Ok(Response::new(RevokeTokenResponse { revoked: true }))
     }
 }

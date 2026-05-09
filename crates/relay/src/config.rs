@@ -25,6 +25,10 @@ pub struct RelayConfig {
     pub rate_limiting: RateLimitConfig,
     #[serde(default)]
     pub idempotency: IdempotencyConfig,
+    #[serde(default)]
+    pub auth: AuthConfig,
+    #[serde(default)]
+    pub tls: TlsConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -51,6 +55,73 @@ pub struct IdempotencyConfig {
     pub cache_capacity: usize,
     #[serde(default = "default_cache_ttl_seconds")]
     pub cache_ttl_seconds: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuthConfig {
+    /// Whether Relay should enforce authentication/authorization.
+    ///
+    /// For MVP security requirements, set to true in `config/relay.yaml`.
+    #[serde(default = "default_auth_enabled")]
+    pub enabled: bool,
+
+    /// Map token -> controller auth entry.
+    ///
+    /// MVP: static token verification (JWT/mTLS can be added in P1/P2).
+    #[serde(default)]
+    pub controller_tokens: std::collections::HashMap<String, ControllerAuthEntry>,
+
+    /// Map token -> device auth entry.
+    #[serde(default)]
+    pub device_tokens: std::collections::HashMap<String, DeviceAuthEntry>,
+
+    /// Allowed method list. If empty, all methods are allowed (MVP default).
+    #[serde(default)]
+    pub method_whitelist: Vec<String>,
+
+    #[serde(default)]
+    pub jwt: JwtConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct JwtConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub hs256_secret: String,
+    #[serde(default)]
+    pub issuer: Option<String>,
+    #[serde(default)]
+    pub audience: Option<String>,
+    #[serde(default = "default_jwt_clock_skew_seconds")]
+    pub clock_skew_seconds: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ControllerAuthEntry {
+    pub controller_id: String,
+    /// admin / operator / viewer
+    pub role: String,
+    #[serde(default)]
+    pub allowed_project_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeviceAuthEntry {
+    pub device_id: String,
+    pub project_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TlsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cert_path: Option<String>,
+    #[serde(default)]
+    pub key_path: Option<String>,
+    #[serde(default)]
+    pub client_ca_path: Option<String>,
 }
 
 impl Default for StreamConfig {
@@ -214,4 +285,36 @@ fn default_cache_capacity() -> usize {
 
 fn default_cache_ttl_seconds() -> u64 {
     3600
+}
+
+fn default_auth_enabled() -> bool {
+    false
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_auth_enabled(),
+            controller_tokens: Default::default(),
+            device_tokens: Default::default(),
+            method_whitelist: Vec::new(),
+            jwt: JwtConfig::default(),
+        }
+    }
+}
+
+impl Default for JwtConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hs256_secret: String::new(),
+            issuer: None,
+            audience: None,
+            clock_skew_seconds: default_jwt_clock_skew_seconds(),
+        }
+    }
+}
+
+fn default_jwt_clock_skew_seconds() -> u64 {
+    30
 }

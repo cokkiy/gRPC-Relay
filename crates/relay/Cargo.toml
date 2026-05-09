@@ -18,9 +18,10 @@ clap = { workspace = true }
 axum = { workspace = true, features = ["tokio"] }
 hyper = { workspace = true }
 time = { workspace = true }
+jsonwebtoken = { workspace = true }
 
 # gRPC server + streaming
-tonic = { version = "0.11", features = ["transport"] }
+tonic = { version = "0.11", features = ["transport", "tls"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 
 # Idempotency cache (LRU + TTL)

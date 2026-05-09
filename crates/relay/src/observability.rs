@@ -7,19 +7,22 @@ use tracing::info;
 
 use tokio::net::TcpListener;
 
+use crate::security_metrics::{SecurityMetrics, SecurityMetricsSnapshot};
 use crate::{config::HealthConfig, AppError, Result};
 
 #[derive(Clone)]
 pub struct HealthState {
     started_at: Instant,
     version: &'static str,
+    security_metrics: SecurityMetrics,
 }
 
 impl HealthState {
-    pub fn new(version: &'static str) -> Self {
+    pub fn new(version: &'static str, security_metrics: SecurityMetrics) -> Self {
         Self {
             started_at: Instant::now(),
             version,
+            security_metrics,
         }
     }
 }
@@ -89,7 +92,11 @@ fn derive_overall_status(components: &HealthComponents) -> &'static str {
     }
 }
 
-pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result<()> {
+pub async fn serve_health(
+    config: HealthConfig,
+    version: &'static str,
+    security_metrics: SecurityMetrics,
+) -> Result<()> {
     if !config.enabled {
         info!("health server disabled");
         return Ok(());
@@ -104,9 +111,10 @@ pub async fn serve_health(config: HealthConfig, version: &'static str) -> Result
                 source,
             })?;
 
-    let state = HealthState::new(version);
+    let state = HealthState::new(version, security_metrics);
     let app = Router::new()
         .route(&config.path, get(health))
+        .route("/metrics/security", get(security_metrics_handler))
         .with_state(state);
 
     info!(
@@ -172,6 +180,12 @@ async fn health(
     };
 
     Json(response)
+}
+
+async fn security_metrics_handler(
+    axum::extract::State(state): axum::extract::State<HealthState>,
+) -> Json<SecurityMetricsSnapshot> {
+    Json(state.security_metrics.snapshot())
 }
 
 #[cfg(test)]
