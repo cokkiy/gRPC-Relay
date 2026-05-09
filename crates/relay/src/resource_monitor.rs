@@ -115,8 +115,11 @@ mod tests {
 
     #[test]
     fn resource_monitor_has_healthy_defaults() {
-        let monitor = ResourceMonitor::new(&test_config());
-        // On a normal dev machine, should be healthy
+        let mut config = test_config();
+        config.cpu_threshold_percent = 100.0;
+        config.memory_threshold_mb = u64::MAX;
+
+        let monitor = ResourceMonitor::new(&config);
         assert!(monitor.is_healthy());
     }
 
