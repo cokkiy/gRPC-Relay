@@ -1,6 +1,11 @@
 use clap::Parser;
 use relay::{
-    config::AppConfig, grpc_service::RelayGrpcService, logging, observability, state::RelayState,
+    config::AppConfig,
+    grpc_service::RelayGrpcService,
+    logging,
+    observability,
+    resource_monitor::ResourceMonitor,
+    state::RelayState,
     Result,
 };
 use tonic::transport::{Identity, Server, ServerTlsConfig};
@@ -33,16 +38,19 @@ async fn run() -> Result<()> {
         "relay configuration loaded"
     );
 
+    let resource_monitor = ResourceMonitor::new(&config.relay.rate_limiting);
     let health_config = config.observability.health.clone();
     let health_security_metrics = security_metrics.clone();
+    let health_resource_monitor = resource_monitor.clone();
     let health_server = tokio::spawn(observability::serve_health(
         health_config,
         env!("CARGO_PKG_VERSION"),
         health_security_metrics,
+        health_resource_monitor,
     ));
 
     let relay_state = std::sync::Arc::new(RelayState::new());
-    let grpc_service = RelayGrpcService::new(relay_state, &config, security_metrics);
+    let grpc_service = RelayGrpcService::new(relay_state, &config, security_metrics, resource_monitor);
     let stale_stream_cleanup = grpc_service.spawn_stale_stream_cleanup();
     let grpc_addr = config
         .relay

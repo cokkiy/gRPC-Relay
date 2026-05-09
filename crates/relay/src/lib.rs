@@ -9,6 +9,7 @@ pub mod mqtt;
 pub mod observability;
 pub mod rate_limiter;
 pub mod rbac;
+pub mod resource_monitor;
 pub mod security_metrics;
 pub mod session;
 pub mod state;

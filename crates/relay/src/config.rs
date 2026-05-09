@@ -37,16 +37,39 @@ pub struct StreamConfig {
     pub idle_timeout_seconds: u64,
     #[serde(default = "default_max_active_streams")]
     pub max_active_streams: u32,
+    #[serde(default = "default_max_concurrent_streams_per_controller")]
+    pub max_concurrent_streams_per_controller: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RateLimitConfig {
+    // Request rate limits
     #[serde(default = "default_device_rps")]
     pub device_requests_per_second: u64,
-    #[serde(default = "default_controller_rps")]
-    pub controller_requests_per_second: u64,
+    #[serde(default = "default_controller_rpm")]
+    pub controller_requests_per_minute: u64,
     #[serde(default = "default_global_rps")]
     pub global_requests_per_second: u64,
+
+    // Connection rate limits
+    #[serde(default = "default_device_conn_per_minute")]
+    pub device_connection_per_minute: u32,
+    #[serde(default = "default_global_conn_per_second")]
+    pub global_connections_per_second: u32,
+
+    // Bandwidth limits (bytes per second)
+    #[serde(default = "default_device_bw")]
+    pub device_bandwidth_bytes_per_sec: u64,
+    #[serde(default = "default_controller_bw")]
+    pub controller_bandwidth_bytes_per_sec: u64,
+    #[serde(default = "default_global_bw")]
+    pub global_bandwidth_bytes_per_sec: u64,
+
+    // Resource thresholds
+    #[serde(default = "default_cpu_threshold")]
+    pub cpu_threshold_percent: f64,
+    #[serde(default = "default_memory_threshold_mb")]
+    pub memory_threshold_mb: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -129,6 +152,7 @@ impl Default for StreamConfig {
         Self {
             idle_timeout_seconds: default_stream_idle_timeout(),
             max_active_streams: default_max_active_streams(),
+            max_concurrent_streams_per_controller: default_max_concurrent_streams_per_controller(),
         }
     }
 }
@@ -137,8 +161,15 @@ impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
             device_requests_per_second: default_device_rps(),
-            controller_requests_per_second: default_controller_rps(),
+            controller_requests_per_minute: default_controller_rpm(),
             global_requests_per_second: default_global_rps(),
+            device_connection_per_minute: default_device_conn_per_minute(),
+            global_connections_per_second: default_global_conn_per_second(),
+            device_bandwidth_bytes_per_sec: default_device_bw(),
+            controller_bandwidth_bytes_per_sec: default_controller_bw(),
+            global_bandwidth_bytes_per_sec: default_global_bw(),
+            cpu_threshold_percent: default_cpu_threshold(),
+            memory_threshold_mb: default_memory_threshold_mb(),
         }
     }
 }
@@ -264,19 +295,51 @@ fn default_stream_idle_timeout() -> u64 {
 }
 
 fn default_max_active_streams() -> u32 {
-    1000
+    10
 }
 
-fn default_device_rps() -> u64 {
+fn default_max_concurrent_streams_per_controller() -> u32 {
     100
 }
 
-fn default_controller_rps() -> u64 {
+fn default_device_rps() -> u64 {
+    1000
+}
+
+fn default_controller_rpm() -> u64 {
     1000
 }
 
 fn default_global_rps() -> u64 {
     100_000
+}
+
+fn default_device_conn_per_minute() -> u32 {
+    10
+}
+
+fn default_global_conn_per_second() -> u32 {
+    100
+}
+
+fn default_device_bw() -> u64 {
+    10 * 1024 * 1024 // 10 MB/s
+}
+
+fn default_controller_bw() -> u64 {
+    100 * 1024 * 1024 // 100 MB/s
+}
+
+fn default_global_bw() -> u64 {
+    100 * 1024 * 1024 // 100 MB/s (800 Mbps)
+}
+
+fn default_cpu_threshold() -> f64 {
+    80.0
+}
+
+fn default_memory_threshold_mb() -> u64 {
+    12 * 1024 // 12 GB
 }
 
 fn default_cache_capacity() -> usize {

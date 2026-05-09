@@ -1,8 +1,9 @@
 use crate::auth::AuthService;
 use crate::config::AppConfig;
 use crate::idempotency::IdempotencyCache;
-use crate::rate_limiter::RateLimiter;
+use crate::rate_limiter::{BandwidthTracker, ConnectionRateLimiter, RateLimiter};
 use crate::rbac::{AuthorizationError, RbacPolicyEngine};
+use crate::resource_monitor::ResourceMonitor;
 use crate::security_metrics::SecurityMetrics;
 use crate::session::SessionRegistry;
 use crate::state::{
@@ -33,12 +34,15 @@ pub struct RelayGrpcService {
     relay_address: String,
     idempotency_cache: IdempotencyCache,
     rate_limiter: RateLimiter,
+    connection_limiter: ConnectionRateLimiter,
+    bandwidth_tracker: BandwidthTracker,
     stream_router: StreamRouter,
     session_registry: SessionRegistry,
     inflight_timeout: Duration,
     auth_service: AuthService,
     rbac: RbacPolicyEngine,
     security_metrics: SecurityMetrics,
+    resource_monitor: ResourceMonitor,
 }
 
 impl RelayGrpcService {
@@ -46,6 +50,7 @@ impl RelayGrpcService {
         state: Arc<RelayState>,
         config: &AppConfig,
         security_metrics: SecurityMetrics,
+        resource_monitor: ResourceMonitor,
     ) -> Self {
         let auth_service = AuthService::new(&config.relay.auth);
         let rbac = RbacPolicyEngine::new(&config.relay.auth);
@@ -56,6 +61,8 @@ impl RelayGrpcService {
                 config.relay.idempotency.cache_ttl_seconds,
             ),
             rate_limiter: RateLimiter::new(&config.relay.rate_limiting),
+            connection_limiter: ConnectionRateLimiter::new(&config.relay.rate_limiting),
+            bandwidth_tracker: BandwidthTracker::new(&config.relay.rate_limiting),
             stream_router: StreamRouter::new(&config.relay.stream),
             session_registry: SessionRegistry::new(state.clone()),
             inflight_timeout: Duration::from_secs(60),
@@ -64,6 +71,7 @@ impl RelayGrpcService {
             auth_service,
             rbac,
             security_metrics,
+            resource_monitor,
         }
     }
 
@@ -94,6 +102,8 @@ impl RelayGrpcService {
         stream_router: StreamRouter,
         auth_service: AuthService,
         security_metrics: SecurityMetrics,
+        connection_limiter: ConnectionRateLimiter,
+        resource_monitor: ResourceMonitor,
         mut inbound: S,
         out_tx: mpsc::Sender<Result<RelayMessage, Status>>,
     ) where
@@ -162,6 +172,29 @@ impl RelayGrpcService {
                             );
                             break;
                         }
+                    }
+
+                    // Per-device connection rate limiting
+                    if !connection_limiter.allow_device(&dev_id) {
+                        security_metrics.record_rate_limit();
+                        tracing::info!(
+                            event = "rate_limit",
+                            actor_type = "device",
+                            device_id = %dev_id,
+                            reason = "connection_limit_exceeded"
+                        );
+                        break;
+                    }
+
+                    // System resource health check
+                    if !resource_monitor.is_healthy() {
+                        tracing::warn!(
+                            event = "rate_limit",
+                            actor_type = "device",
+                            device_id = %dev_id,
+                            reason = "resource_unhealthy"
+                        );
+                        break;
                     }
 
                     let connection_id = state.next_connection_id();
@@ -282,6 +315,7 @@ impl RelayGrpcService {
         router: StreamRouter,
         cache: IdempotencyCache,
         rate_limiter: RateLimiter,
+        bandwidth_tracker: BandwidthTracker,
         session_registry: SessionRegistry,
         state: Arc<RelayState>,
         inflight_timeout: Duration,
@@ -507,6 +541,29 @@ impl RelayGrpcService {
                     msg.encrypted_payload.clone(),
                 );
 
+                // Bandwidth check before forwarding
+                if !bandwidth_tracker.record_and_check(
+                    device_id,
+                    &msg.controller_id,
+                    msg.encrypted_payload.len() as u64,
+                ) {
+                    security_metrics.record_rate_limit();
+                    tracing::info!(
+                        event = "rate_limit",
+                        actor_type = "controller",
+                        controller_id = %msg.controller_id,
+                        device_id = %msg.target_device_id,
+                        method_name = %msg.method_name,
+                        token_prefix = %AuthService::token_prefix(&msg.token),
+                        reason = "bandwidth_exceeded"
+                    );
+                    send_error_response(&out_tx, device_id, seq, ErrorCode::RateLimited).await;
+                    if let Some(ref sid) = stream_id {
+                        router.finish_request(sid);
+                    }
+                    continue;
+                }
+
                 tracing::info!(
                     event = "controller_request_to_device",
                     actor_type = "controller",
@@ -594,11 +651,19 @@ mod tests {
                 stream: StreamConfig {
                     idle_timeout_seconds: 60,
                     max_active_streams: 100,
+                    max_concurrent_streams_per_controller: 100,
                 },
                 rate_limiting: RateLimitConfig {
                     device_requests_per_second: 100,
-                    controller_requests_per_second: 100,
+                    controller_requests_per_minute: 60_000,
                     global_requests_per_second: 1_000,
+                    device_connection_per_minute: 10,
+                    global_connections_per_second: 100,
+                    device_bandwidth_bytes_per_sec: 10 * 1024 * 1024,
+                    controller_bandwidth_bytes_per_sec: 100 * 1024 * 1024,
+                    global_bandwidth_bytes_per_sec: 100 * 1024 * 1024,
+                    cpu_threshold_percent: 80.0,
+                    memory_threshold_mb: 12 * 1024,
                 },
                 idempotency: IdempotencyConfig {
                     cache_capacity: 10_000,
@@ -627,6 +692,7 @@ mod tests {
             state.clone(),
             &config,
             crate::security_metrics::SecurityMetrics::default(),
+            crate::resource_monitor::ResourceMonitor::new(&config.relay.rate_limiting),
         );
         (service, state)
     }
@@ -663,6 +729,8 @@ mod tests {
             service.stream_router.clone(),
             service.auth_service.clone(),
             service.security_metrics.clone(),
+            service.connection_limiter.clone(),
+            service.resource_monitor.clone(),
             inbound,
             relay_tx,
         ));
@@ -705,6 +773,7 @@ mod tests {
             service.stream_router.clone(),
             service.idempotency_cache.clone(),
             service.rate_limiter.clone(),
+            service.bandwidth_tracker.clone(),
             service.session_registry.clone(),
             service.state.clone(),
             service.inflight_timeout,
@@ -1138,11 +1207,13 @@ mod tests {
                 stream: StreamConfig {
                     idle_timeout_seconds: 60,
                     max_active_streams: 100,
+                    max_concurrent_streams_per_controller: 100,
                 },
                 rate_limiting: RateLimitConfig {
                     device_requests_per_second: 100,
-                    controller_requests_per_second: 100,
+                    controller_requests_per_minute: 60_000,
                     global_requests_per_second: 1_000,
+                    ..Default::default()
                 },
                 idempotency: IdempotencyConfig {
                     cache_capacity: 10_000,
@@ -1241,6 +1312,8 @@ mod tests {
             service.stream_router.clone(),
             service.auth_service.clone(),
             service.security_metrics.clone(),
+            service.connection_limiter.clone(),
+            service.resource_monitor.clone(),
             inbound,
             relay_tx,
         ));
@@ -1430,7 +1503,7 @@ mod tests {
     #[tokio::test]
     async fn list_online_devices_returns_resource_exhausted_when_limited() {
         let mut cfg = test_config_with_auth_enabled();
-        cfg.relay.rate_limiting.controller_requests_per_second = 1;
+        cfg.relay.rate_limiting.controller_requests_per_minute = 1;
         cfg.relay.rate_limiting.global_requests_per_second = 100;
         let (service, _state) = service_with_state(cfg);
         let token = operator_jwt();
@@ -1552,6 +1625,30 @@ impl RelayService for RelayGrpcService {
         &self,
         request: Request<tonic::Streaming<DeviceMessage>>,
     ) -> std::result::Result<Response<Self::DeviceConnectStream>, Status> {
+        // Global connection rate limit
+        if !self.connection_limiter.allow_global().await {
+            self.security_metrics.record_rate_limit();
+            tracing::info!(
+                event = "rate_limit",
+                actor_type = "system",
+                reason = "global_connection_limit_exceeded"
+            );
+            return Err(Status::resource_exhausted(
+                "global connection rate limit exceeded",
+            ));
+        }
+
+        // System resource health check
+        if !self.resource_monitor.is_healthy() {
+            self.security_metrics.record_rate_limit();
+            tracing::info!(
+                event = "rate_limit",
+                actor_type = "system",
+                reason = "resource_unhealthy"
+            );
+            return Err(Status::resource_exhausted("system overloaded"));
+        }
+
         let inbound = request.into_inner();
 
         let (out_tx, out_rx) = mpsc::channel::<std::result::Result<RelayMessage, Status>>(64);
@@ -1562,6 +1659,8 @@ impl RelayService for RelayGrpcService {
         let stream_router = self.stream_router.clone();
         let auth_service = self.auth_service.clone();
         let security_metrics = self.security_metrics.clone();
+        let connection_limiter = self.connection_limiter.clone();
+        let resource_monitor = self.resource_monitor.clone();
         tokio::spawn(async move {
             Self::run_device_connect_stream(
                 state,
@@ -1569,6 +1668,8 @@ impl RelayService for RelayGrpcService {
                 stream_router,
                 auth_service,
                 security_metrics,
+                connection_limiter,
+                resource_monitor,
                 inbound,
                 out_tx,
             )
@@ -1676,6 +1777,7 @@ impl RelayService for RelayGrpcService {
         let router = self.stream_router.clone();
         let cache = self.idempotency_cache.clone();
         let rate_limiter = self.rate_limiter.clone();
+        let bandwidth_tracker = self.bandwidth_tracker.clone();
         let session_registry = self.session_registry.clone();
         let state = self.state.clone();
         let inflight_timeout = self.inflight_timeout;
@@ -1689,6 +1791,7 @@ impl RelayService for RelayGrpcService {
                 router,
                 cache,
                 rate_limiter,
+                bandwidth_tracker,
                 session_registry,
                 state,
                 inflight_timeout,
