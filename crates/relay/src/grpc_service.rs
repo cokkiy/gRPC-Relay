@@ -1686,13 +1686,19 @@ impl RelayService for RelayGrpcService {
             _ => return Err(Status::invalid_argument("invalid target_type")),
         }
 
+        let logged_token_prefix = req
+            .target_token_hash_or_prefix
+            .chars()
+            .take(8)
+            .collect::<String>();
+
         self.security_metrics.record_revoked_token();
         tracing::info!(
             event = "token_revoked",
             actor_type = "controller",
             controller_id = %req.controller_id,
             target_type = req.target_type,
-            token_prefix = %req.target_token_hash_or_prefix,
+            token_prefix = %logged_token_prefix,
             reason = %req.reason
         );
 
