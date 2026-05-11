@@ -227,21 +227,226 @@
 
 ---
 
-### 7) MQTT 服务发现与遥测
-**目标**：实现设备上下线通知、设备自报状态、Relay 遥测发布。
+### 7) MQTT 服务发现与遥测（Discovery & Telemetry）
 
-**交付物**
-- relay/device/online
-- relay/device/offline
-- device/{device_id}/status
-- telemetry/{device_id}
-- telemetry/relay/{relay_id}
-- MQTT 客户端重连与降级策略
-- Controller 侧订阅/验证逻辑（如果项目包含）
+**目标**：通过 MQTT 实现设备在线/离线可见性与遥测上报；并在 MQTT 不可用时通过 gRPC 查询实现可恢复的服务发现链路；同时发布 Relay 自身遥测数据用于运维与容量观测。
 
-**依赖**
-- 设备注册/离线流程
-- 基础工程与配置体系
+---
+
+#### 7.1 MQTT 主题契约（以 `doc/protocol_spec.md` 为准，canonical topics）
+
+- **设备上线通知（Relay → Controller）**
+  - Topic：`relay/device/online`
+  - QoS：1（至少一次）
+  - Retain：建议 `true`
+  - Payload（JSON）：
+    - `device_id` / `connection_id` / `relay_address` / `timestamp` / `metadata{...}`
+
+- **设备离线通知（Relay → Controller）**
+  - Topic：`relay/device/offline`
+  - QoS：1
+  - Retain：建议 `false`
+  - Payload（JSON）：
+    - `device_id` / `connection_id` / `timestamp` / `reason`（`timeout | graceful_shutdown | error`）
+
+- **设备自报状态（stationService 可选备份验证）**
+  - Topic：`device/{device_id}/status`
+  - QoS：1
+  - Payload（JSON）：
+    - `device_id` / `status`（`online|offline`）/ `relay_address` / `connection_id` / `timestamp`
+
+- **设备遥测（Device → Telemetry）**
+  - Topic：`telemetry/{device_id}`
+  - QoS：0（最多一次，允许丢失）
+  - Payload（JSON）：
+    - `device_id` / `timestamp` / `metrics{...}`（至少包含 cpu/memory/network 等基础字段）
+
+- **Relay 遥测（Relay → Telemetry）**
+  - Topic：`telemetry/relay/{relay_id}`
+  - QoS：0（最多一次）
+  - Payload（JSON）：至少包含
+    - `relay_id` / `relay_address` / `timestamp`
+    - `system_metrics`、`connection_metrics`、`stream_metrics`、`performance_metrics`、`error_metrics`、`queue_metrics`、`mqtt_metrics`、`health_status`
+
+---
+
+#### 7.2 MVP 职责边界（实现落点）
+
+- **Relay（本仓库内实现）**
+  1. 设备连接成功后发布：`relay/device/online`
+  2. 设备断连清理后发布：`relay/device/offline`（带 `reason`）
+  3. 固定周期发布遥测：`telemetry/relay/{relay_id}`
+  4. MQTT 断连时按“降级策略”运行（不影响主链路转发）
+
+- **Controller（若项目包含消费逻辑；否则作为对外契约）**
+  - 订阅 `relay/device/online` 与 `relay/device/offline`
+  - 收到通知后更新在线集合（保存 `device_id/connection_id/relay_address/timestamp`）
+  - MQTT 丢失/不可用时，通过 gRPC `ListOnlineDevices()` 做全量补偿/修复
+
+---
+
+#### 7.3 “三路兜底”发现一致性策略（可验证）
+
+1. **主路径**：MQTT 通知实时更新在线集合  
+2. **备份验证**：若设备侧 `device/{device_id}/status` 可用，则对比并记录冲突告警（不阻断主路径）  
+3. **最终补偿**：当 MQTT 不可用或订阅恢复后，Controller 触发 `ListOnlineDevices()` 拉取全量在线集合，并以 gRPC 返回为准合并修复
+
+---
+
+#### 7.4 MQTT 客户端重连与降级策略（必须落地）
+
+- **重连**
+  - 断线后指数退避重连，避免重连风暴
+  - 重连成功后触发一次“全量状态同步/补偿”（不依赖 retained 为唯一真相）
+
+- **MQTT 不可用降级（Relay → Controller）**
+  - 降低/暂停遥测与事件发布频率
+  - Controller 切换为轮询：每 30 秒调用 `ListOnlineDevices()`，保证“在线集合可用”
+
+- **MQTT 恢复**
+  - Controller 可逐步恢复订阅模式；或继续混合（MQTT + gRPC）以提高一致性
+
+---
+
+#### 7.5 验收标准（面向可验证输出）
+
+- **在线/离线事件**
+  - 设备完成注册并建立长连接后：Controller（或测试订阅端）必须在窗口内收到 `relay/device/online`
+  - 设备断连清理后：必须收到 `relay/device/offline`，且 `reason` 与实现约定一致
+- **遥测发布**
+  - `telemetry/relay/{relay_id}` 周期发布正常；断网/重连不导致进程崩溃或资源泄漏
+- **补偿机制**
+  - 人为模拟 MQTT 断连/恢复后：Controller 通过 `ListOnlineDevices()` 能恢复正确在线集合
+
+---
+
+#### 7.6 集成测试建议（最小集）
+
+1. **MQTT 在线通知测试**
+   - 订阅 `relay/device/online`
+   - 启动设备并注册长连接
+   - 断言 payload 字段完整且与会话一致
+
+2. **MQTT 离线通知测试**
+   - 断开设备连接（graceful shutdown 或 timeout）
+   - 订阅 `relay/device/offline`
+   - 断言 `reason` 与 `connection_id` 行为符合实现约定
+
+3. **MQTT 断连降级测试**
+   - 暂停 MQTT Broker / 断网
+   - 验证 Controller 轮询 `ListOnlineDevices()` 能维持在线集合正确
+   - MQTT 恢复后可继续恢复订阅/混合
+<REPLACE>
+### 7) MQTT 服务发现与遥测（Discovery & Telemetry）
+
+**目标**：通过 MQTT 实现设备在线/离线可见性与遥测上报；并在 MQTT 不可用时通过 gRPC 查询实现可恢复的服务发现链路；同时发布 Relay 自身遥测数据用于运维与容量观测。
+
+---
+
+#### 7.1 MQTT 主题契约（以 `doc/protocol_spec.md` 为准，canonical topics）
+
+- **设备上线通知（Relay → Controller）**
+  - Topic：`relay/device/online`
+  - QoS：1（至少一次）
+  - Retain：建议 `true`
+  - Payload（JSON）：
+    - `device_id` / `connection_id` / `relay_address` / `timestamp` / `metadata{...}`
+
+- **设备离线通知（Relay → Controller）**
+  - Topic：`relay/device/offline`
+  - QoS：1
+  - Retain：建议 `false`
+  - Payload（JSON）：
+    - `device_id` / `connection_id` / `timestamp` / `reason`（`timeout | graceful_shutdown | error`）
+
+- **设备自报状态（stationService 可选备份验证）**
+  - Topic：`device/{device_id}/status`
+  - QoS：1
+  - Payload（JSON）：
+    - `device_id` / `status`（`online|offline`）/ `relay_address` / `connection_id` / `timestamp`
+
+- **设备遥测（Device → Telemetry）**
+  - Topic：`telemetry/{device_id}`
+  - QoS：0（最多一次，允许丢失）
+  - Payload（JSON）：
+    - `device_id` / `timestamp` / `metrics{...}`（至少包含 cpu/memory/network 等基础字段）
+
+- **Relay 遥测（Relay → Telemetry）**
+  - Topic：`telemetry/relay/{relay_id}`
+  - QoS：0（最多一次）
+  - Payload（JSON）：至少包含
+    - `relay_id` / `relay_address` / `timestamp`
+    - `system_metrics`、`connection_metrics`、`stream_metrics`、`performance_metrics`、`error_metrics`、`queue_metrics`、`mqtt_metrics`、`health_status`
+
+---
+
+#### 7.2 MVP 职责边界（实现落点）
+
+- **Relay（本仓库内实现）**
+  1. 设备连接成功后发布：`relay/device/online`
+  2. 设备断连清理后发布：`relay/device/offline`（带 `reason`）
+  3. 固定周期发布遥测：`telemetry/relay/{relay_id}`
+  4. MQTT 断连时按“降级策略”运行（不影响主链路转发）
+
+- **Controller（若项目包含消费逻辑；否则作为对外契约）**
+  - 订阅 `relay/device/online` 与 `relay/device/offline`
+  - 收到通知后更新在线集合（保存 `device_id/connection_id/relay_address/timestamp`）
+  - MQTT 丢失/不可用时，通过 gRPC `ListOnlineDevices()` 做全量补偿/修复
+
+---
+
+#### 7.3 “三路兜底”发现一致性策略（可验证）
+
+1. **主路径**：MQTT 通知实时更新在线集合  
+2. **备份验证**：若设备侧 `device/{device_id}/status` 可用，则对比并记录冲突告警（不阻断主路径）  
+3. **最终补偿**：当 MQTT 不可用或订阅恢复后，Controller 触发 `ListOnlineDevices()` 拉取全量在线集合，并以 gRPC 返回为准合并修复
+
+---
+
+#### 7.4 MQTT 客户端重连与降级策略（必须落地）
+
+- **重连**
+  - 断线后指数退避重连，避免重连风暴
+  - 重连成功后触发一次“全量状态同步/补偿”（不依赖 retained 为唯一真相）
+
+- **MQTT 不可用降级（Relay → Controller）**
+  - 降低/暂停遥测与事件发布频率
+  - Controller 切换为轮询：每 30 秒调用 `ListOnlineDevices()`，保证“在线集合可用”
+
+- **MQTT 恢复**
+  - Controller 可逐步恢复订阅模式；或继续混合（MQTT + gRPC）以提高一致性
+
+---
+
+#### 7.5 验收标准（面向可验证输出）
+
+- **在线/离线事件**
+  - 设备完成注册并建立长连接后：Controller（或测试订阅端）必须在窗口内收到 `relay/device/online`
+  - 设备断连清理后：必须收到 `relay/device/offline`，且 `reason` 与实现约定一致
+- **遥测发布**
+  - `telemetry/relay/{relay_id}` 周期发布正常；断网/重连不导致进程崩溃或资源泄漏
+- **补偿机制**
+  - 人为模拟 MQTT 断连/恢复后：Controller 通过 `ListOnlineDevices()` 能恢复正确在线集合
+
+---
+
+#### 7.6 集成测试建议（最小集）
+
+1. **MQTT 在线通知测试**
+   - 订阅 `relay/device/online`
+   - 启动设备并注册长连接
+   - 断言 payload 字段完整且与会话一致
+
+2. **MQTT 离线通知测试**
+   - 断开设备连接（graceful shutdown 或 timeout）
+   - 订阅 `relay/device/offline`
+   - 断言 `reason` 与 `connection_id` 行为符合实现约定
+
+3. **MQTT 断连降级测试**
+   - 暂停 MQTT Broker / 断网
+   - 验证 Controller 轮询 `ListOnlineDevices()` 能维持在线集合正确
+   - MQTT 恢复后可继续恢复订阅/混合
+</REPLACE>
 
 ---
 
