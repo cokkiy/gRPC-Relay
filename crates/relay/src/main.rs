@@ -3,6 +3,7 @@ use relay::{
     config::AppConfig,
     grpc_service::RelayGrpcService,
     logging,
+    mqtt,
     observability,
     resource_monitor::ResourceMonitor,
     state::RelayState,
@@ -50,7 +51,27 @@ async fn run() -> Result<()> {
     ));
 
     let relay_state = std::sync::Arc::new(RelayState::new());
-    let grpc_service = RelayGrpcService::new(relay_state, &config, security_metrics, resource_monitor);
+
+    let mqtt_publisher = if config.relay.mqtt.enabled {
+        let handles = mqtt::spawn_mqtt_publisher(
+            config.relay.mqtt.clone(),
+            config.relay.id.clone(),
+            config.relay.address.clone(),
+            relay_state.clone(),
+            resource_monitor.clone(),
+        );
+        Some(handles.publisher)
+    } else {
+        None
+    };
+
+    let grpc_service = RelayGrpcService::new(
+        relay_state,
+        &config,
+        security_metrics,
+        resource_monitor,
+        mqtt_publisher,
+    );
     let stale_stream_cleanup = grpc_service.spawn_stale_stream_cleanup();
     let grpc_addr = config
         .relay

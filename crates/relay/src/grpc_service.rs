@@ -1,6 +1,7 @@
 use crate::auth::AuthService;
 use crate::config::AppConfig;
 use crate::idempotency::IdempotencyCache;
+use crate::mqtt::MqttPublisher;
 use crate::rate_limiter::{BandwidthTracker, ConnectionRateLimiter, RateLimiter};
 use crate::rbac::{AuthorizationError, RbacPolicyEngine};
 use crate::resource_monitor::ResourceMonitor;
@@ -43,6 +44,7 @@ pub struct RelayGrpcService {
     rbac: RbacPolicyEngine,
     security_metrics: SecurityMetrics,
     resource_monitor: ResourceMonitor,
+    mqtt_publisher: Option<MqttPublisher>,
 }
 
 impl RelayGrpcService {
@@ -51,6 +53,7 @@ impl RelayGrpcService {
         config: &AppConfig,
         security_metrics: SecurityMetrics,
         resource_monitor: ResourceMonitor,
+        mqtt_publisher: Option<MqttPublisher>,
     ) -> Self {
         let auth_service = AuthService::new(&config.relay.auth);
         let rbac = RbacPolicyEngine::new(&config.relay.auth);
@@ -72,6 +75,7 @@ impl RelayGrpcService {
             rbac,
             security_metrics,
             resource_monitor,
+            mqtt_publisher,
         }
     }
 
@@ -104,15 +108,19 @@ impl RelayGrpcService {
         security_metrics: SecurityMetrics,
         connection_limiter: ConnectionRateLimiter,
         resource_monitor: ResourceMonitor,
+        mqtt_publisher: Option<MqttPublisher>,
+        relay_address: String,
         mut inbound: S,
         out_tx: mpsc::Sender<Result<RelayMessage, Status>>,
     ) where
         S: Stream<Item = Result<DeviceMessage, Status>> + Unpin,
     {
         let mut current_device_id: Option<String> = None;
+        let mut disconnect_reason = "timeout";
 
         while let Some(next_message) = inbound.next().await {
             let Ok(dev_msg) = next_message else {
+                disconnect_reason = "error";
                 break;
             };
             let dev_id = dev_msg.device_id.clone();
@@ -132,6 +140,7 @@ impl RelayGrpcService {
                             token_prefix = %AuthService::token_prefix(&device_token),
                             reason = "device_id_mismatch_on_stream"
                         );
+                        disconnect_reason = "error";
                         break;
                     }
                     None => {
@@ -143,6 +152,7 @@ impl RelayGrpcService {
                             token_prefix = %AuthService::token_prefix(&device_token),
                             reason = "non_register_before_registration"
                         );
+                        disconnect_reason = "error";
                         break;
                     }
                 }
@@ -172,6 +182,7 @@ impl RelayGrpcService {
                                 token_prefix = %AuthService::token_prefix(&device_token),
                                 reason = "invalid_device_token"
                             );
+                            disconnect_reason = "error";
                             break;
                         }
                     }
@@ -185,6 +196,7 @@ impl RelayGrpcService {
                             device_id = %dev_id,
                             reason = "connection_limit_exceeded"
                         );
+                        disconnect_reason = "error";
                         break;
                     }
 
@@ -196,6 +208,7 @@ impl RelayGrpcService {
                             device_id = %dev_id,
                             reason = "resource_unhealthy"
                         );
+                        disconnect_reason = "error";
                         break;
                     }
 
@@ -232,6 +245,15 @@ impl RelayGrpcService {
                         "device registered"
                     );
 
+                    if let Some(ref mqtt) = mqtt_publisher {
+                        mqtt.publish_device_online(
+                            dev_id.clone(),
+                            connection_id.clone(),
+                            relay_address.clone(),
+                            register_req.metadata.clone(),
+                        );
+                    }
+
                     let resp = relay_message_register_response(connection_id, session_resumed);
                     let _ = out_tx.send(Ok(resp)).await;
                 }
@@ -249,6 +271,7 @@ impl RelayGrpcService {
                             token_prefix = %AuthService::token_prefix(&device_token),
                             reason = "invalid_device_token_on_heartbeat"
                         );
+                        disconnect_reason = "error";
                         break;
                     } else {
                         security_metrics.record_auth_success();
@@ -274,6 +297,7 @@ impl RelayGrpcService {
                             token_prefix = %AuthService::token_prefix(&device_token),
                             reason = "data_before_registration"
                         );
+                        disconnect_reason = "error";
                         break;
                     };
                     if let Some(inflight) =
@@ -308,6 +332,21 @@ impl RelayGrpcService {
                         .controller_tx
                         .send(Ok(error_resp(did, 0, ErrorCode::DeviceOffline)))
                         .await;
+                }
+            }
+
+            let connection_id = state
+                .sessions_by_device_id
+                .get(did.as_str())
+                .map(|s| s.connection_id.clone());
+
+            if let Some(ref mqtt) = mqtt_publisher {
+                if let Some(ref cid) = connection_id {
+                    mqtt.publish_device_offline(
+                        did.clone(),
+                        cid.clone(),
+                        disconnect_reason.to_string(),
+                    );
                 }
             }
 
@@ -674,6 +713,7 @@ mod tests {
                     cache_ttl_seconds: 3_600,
                 },
                 auth: Default::default(),
+                mqtt: Default::default(),
                 tls: Default::default(),
             },
             observability: ObservabilityConfig {
@@ -697,6 +737,7 @@ mod tests {
             &config,
             crate::security_metrics::SecurityMetrics::default(),
             crate::resource_monitor::ResourceMonitor::new(&config.relay.rate_limiting),
+            None,
         );
         (service, state)
     }
@@ -735,6 +776,8 @@ mod tests {
             service.security_metrics.clone(),
             service.connection_limiter.clone(),
             service.resource_monitor.clone(),
+            service.mqtt_publisher.clone(),
+            service.relay_address.clone(),
             inbound,
             relay_tx,
         ));
@@ -1157,6 +1200,8 @@ mod tests {
             service.security_metrics.clone(),
             service.connection_limiter.clone(),
             service.resource_monitor.clone(),
+            service.mqtt_publisher.clone(),
+            service.relay_address.clone(),
             inbound,
             relay_tx,
         ));
@@ -1181,7 +1226,8 @@ mod tests {
         let expected_auth_failures = auth_failures_before + 1;
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                if service.security_metrics.snapshot().auth_failure_total >= expected_auth_failures {
+                if service.security_metrics.snapshot().auth_failure_total >= expected_auth_failures
+                {
                     break;
                 }
                 tokio::task::yield_now().await;
@@ -1287,6 +1333,7 @@ mod tests {
                         clock_skew_seconds: 30,
                     },
                 },
+                mqtt: Default::default(),
                 tls: Default::default(),
             },
             observability: ObservabilityConfig {
@@ -1369,6 +1416,8 @@ mod tests {
             service.security_metrics.clone(),
             service.connection_limiter.clone(),
             service.resource_monitor.clone(),
+            service.mqtt_publisher.clone(),
+            service.relay_address.clone(),
             inbound,
             relay_tx,
         ));
@@ -1716,6 +1765,8 @@ impl RelayService for RelayGrpcService {
         let security_metrics = self.security_metrics.clone();
         let connection_limiter = self.connection_limiter.clone();
         let resource_monitor = self.resource_monitor.clone();
+        let mqtt_publisher = self.mqtt_publisher.clone();
+        let relay_address = self.relay_address.clone();
         tokio::spawn(async move {
             Self::run_device_connect_stream(
                 state,
@@ -1725,6 +1776,8 @@ impl RelayService for RelayGrpcService {
                 security_metrics,
                 connection_limiter,
                 resource_monitor,
+                mqtt_publisher,
+                relay_address,
                 inbound,
                 out_tx,
             )
