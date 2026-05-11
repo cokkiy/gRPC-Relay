@@ -40,14 +40,17 @@ async fn run() -> Result<()> {
     );
 
     let resource_monitor = ResourceMonitor::new(&config.relay.rate_limiting);
+    let mqtt_runtime = mqtt::MqttRuntimeState::new(config.relay.mqtt.enabled);
     let health_config = config.observability.health.clone();
     let health_security_metrics = security_metrics.clone();
     let health_resource_monitor = resource_monitor.clone();
+    let health_mqtt_runtime = mqtt_runtime.clone();
     let health_server = tokio::spawn(observability::serve_health(
         health_config,
         env!("CARGO_PKG_VERSION"),
         health_security_metrics,
         health_resource_monitor,
+        health_mqtt_runtime,
     ));
 
     let relay_state = std::sync::Arc::new(RelayState::new());
@@ -59,6 +62,7 @@ async fn run() -> Result<()> {
             config.relay.address.clone(),
             relay_state.clone(),
             resource_monitor.clone(),
+            mqtt_runtime,
         );
         Some(handles.publisher)
     } else {

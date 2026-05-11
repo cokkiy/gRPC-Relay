@@ -28,19 +28,65 @@ pub enum MqttPublishRequest {
     },
 }
 
+#[derive(Debug, Clone)]
+pub struct MqttRuntimeState {
+    enabled: bool,
+    connected: Arc<AtomicBool>,
+    reconnect_count: Arc<AtomicU64>,
+    dropped_total: Arc<AtomicU64>,
+}
+
+impl MqttRuntimeState {
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            connected: Arc::new(AtomicBool::new(false)),
+            reconnect_count: Arc::new(AtomicU64::new(0)),
+            dropped_total: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.connected.load(Ordering::Relaxed)
+    }
+
+    pub fn reconnect_count(&self) -> u64 {
+        self.reconnect_count.load(Ordering::Relaxed)
+    }
+
+    pub fn dropped_total(&self) -> u64 {
+        self.dropped_total.load(Ordering::Relaxed)
+    }
+
+    fn set_connected(&self, value: bool) {
+        self.connected.store(value, Ordering::Relaxed);
+    }
+
+    fn increment_reconnect_count(&self) {
+        self.reconnect_count.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn increment_dropped_total(&self) {
+        self.dropped_total.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// Lightweight handle that can be cloned and used from gRPC service code.
 /// Publishing never blocks the main request path: it best-effort enqueues messages
 /// into a bounded channel and drops them when the channel is full.
 #[derive(Clone)]
 pub struct MqttPublisher {
     tx: mpsc::Sender<MqttPublishRequest>,
-    connected: Arc<AtomicBool>,
-    mqtt_dropped_total: Arc<AtomicU64>,
+    runtime: MqttRuntimeState,
 }
 
 impl MqttPublisher {
     pub fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::Relaxed)
+        self.runtime.is_connected()
     }
 
     pub fn publish_device_online(
@@ -57,7 +103,7 @@ impl MqttPublisher {
             metadata,
         };
         let _ = self.tx.try_send(req).map_err(|_| {
-            self.mqtt_dropped_total.fetch_add(1, Ordering::Relaxed);
+            self.runtime.increment_dropped_total();
         });
     }
 
@@ -70,17 +116,17 @@ impl MqttPublisher {
         let _ = self
             .tx
             .try_send(req)
-            .map_err(|_| self.mqtt_dropped_total.fetch_add(1, Ordering::Relaxed));
+            .map_err(|_| self.runtime.increment_dropped_total());
     }
 
     pub fn mqtt_dropped_total(&self) -> u64 {
-        self.mqtt_dropped_total.load(Ordering::Relaxed)
+        self.runtime.dropped_total()
     }
 }
 
 pub struct MqttHandles {
     pub publisher: MqttPublisher,
-    pub connected: Arc<AtomicBool>,
+    pub runtime: MqttRuntimeState,
 }
 
 /// Spawn MQTT background worker.
@@ -94,18 +140,15 @@ pub fn spawn_mqtt_publisher(
     relay_address: String,
     relay_state: Arc<RelayState>,
     resource_monitor: ResourceMonitor,
+    runtime: MqttRuntimeState,
 ) -> MqttHandles {
-    let connected = Arc::new(AtomicBool::new(false));
-    let connected_for_task = connected.clone();
-    let dropped_total = Arc::new(AtomicU64::new(0));
-
+    let runtime_for_task = runtime.clone();
     // Bounded queue to avoid unbounded memory growth when MQTT is down.
     let (tx, mut rx) = mpsc::channel::<MqttPublishRequest>(256);
 
     let publisher = MqttPublisher {
         tx,
-        connected: connected.clone(),
-        mqtt_dropped_total: dropped_total.clone(),
+        runtime: runtime.clone(),
     };
 
     tokio::spawn(async move {
@@ -113,9 +156,10 @@ pub fn spawn_mqtt_publisher(
         let max = std::cmp::max(initial, cfg.reconnect_max_seconds);
 
         let mut attempt: u32 = 0;
+        let mut has_connected_once = false;
         loop {
             if rx.is_closed() {
-                connected_for_task.store(false, Ordering::Relaxed);
+                runtime_for_task.set_connected(false);
                 return;
             }
 
@@ -126,7 +170,8 @@ pub fn spawn_mqtt_publisher(
                 &relay_state,
                 &resource_monitor,
                 &mut rx,
-                &connected_for_task,
+                &runtime_for_task,
+                &mut has_connected_once,
             )
             .await;
 
@@ -149,7 +194,7 @@ pub fn spawn_mqtt_publisher(
                     let backoff_secs = min(max as u64, (initial as u64).saturating_mul(exp_pow));
                     attempt = attempt.saturating_add(1);
 
-                    connected_for_task.store(false, Ordering::Relaxed);
+                    runtime_for_task.set_connected(false);
                     tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
                 }
             }
@@ -158,7 +203,7 @@ pub fn spawn_mqtt_publisher(
 
     MqttHandles {
         publisher,
-        connected,
+        runtime,
     }
 }
 
@@ -169,7 +214,8 @@ async fn run_mqtt_session(
     relay_state: &Arc<RelayState>,
     resource_monitor: &ResourceMonitor,
     rx: &mut mpsc::Receiver<MqttPublishRequest>,
-    connected: &Arc<AtomicBool>,
+    runtime: &MqttRuntimeState,
+    has_connected_once: &mut bool,
 ) -> Result<(), String> {
     let (host, port) = parse_host_port(&cfg.broker_address)?;
 
@@ -188,7 +234,6 @@ async fn run_mqtt_session(
     // rumqttc: AsyncClient::new returns (AsyncClient, EventLoop) directly.
     let (client, mut eventloop) = AsyncClient::new(options, 10);
 
-    connected.store(true, Ordering::Relaxed);
     info!(
         event = "mqtt_connected",
         relay_id = %relay_id,
@@ -207,12 +252,18 @@ async fn run_mqtt_session(
             ev = eventloop.poll() => {
                 match ev {
                     Ok(Event::Incoming(Packet::ConnAck(_ack))) => {
-                        connected.store(true, Ordering::Relaxed);
+                        if *has_connected_once {
+                            runtime.increment_reconnect_count();
+                        } else {
+                            *has_connected_once = true;
+                        }
+                        runtime.set_connected(true);
+                        publish_online_session_snapshot(client.clone(), relay_state, relay_address).await?;
                     }
                     Ok(Event::Incoming(_)) => {}
                     Ok(Event::Outgoing(_)) => {}
                     Err(e) => {
-                        connected.store(false, Ordering::Relaxed);
+                        runtime.set_connected(false);
                         return Err(format!("mqtt eventloop poll error: {e}"));
                     }
                 }
@@ -220,11 +271,11 @@ async fn run_mqtt_session(
 
             maybe_req = rx.recv() => {
                 let Some(req) = maybe_req else {
-                    connected.store(false, Ordering::Relaxed);
+                    runtime.set_connected(false);
                     return Ok(());
                 };
 
-                if !connected.load(Ordering::Relaxed) {
+                if !runtime.is_connected() {
                     // MQTT is down; drop requests.
                     continue;
                 }
@@ -238,7 +289,7 @@ async fn run_mqtt_session(
             }
 
             _ = telemetry_interval.tick() => {
-                if !connected.load(Ordering::Relaxed) {
+                if !runtime.is_connected() {
                     continue;
                 }
 
@@ -247,6 +298,7 @@ async fn run_mqtt_session(
                     relay_address,
                     relay_state,
                     resource_monitor,
+                    runtime,
                     mqtt_publish_failures_total,
                     cfg.telemetry_interval_seconds,
                 );
@@ -257,8 +309,7 @@ async fn run_mqtt_session(
                     .publish(topic, QoS::AtMostOnce, false, payload.to_string())
                     .await
                 {
-                    mqtt_publish_failures_total += 1;
-                    connected.store(false, Ordering::Relaxed);
+                    runtime.set_connected(false);
                     return Err(format!("mqtt telemetry publish failed: {e}"));
                 }
             }
@@ -343,12 +394,40 @@ async fn publish_device_event(
     }
 }
 
+async fn publish_online_session_snapshot(
+    client: AsyncClient,
+    relay_state: &Arc<RelayState>,
+    relay_address: &str,
+) -> Result<(), String> {
+    for req in online_session_snapshot(relay_state, relay_address) {
+        publish_device_event(client.clone(), req, relay_address, "").await?;
+    }
+    Ok(())
+}
+
+fn online_session_snapshot(
+    relay_state: &Arc<RelayState>,
+    relay_address: &str,
+) -> Vec<MqttPublishRequest> {
+    relay_state
+        .sessions_by_device_id
+        .iter()
+        .map(|entry| MqttPublishRequest::DeviceOnline {
+            device_id: entry.value().device_id.clone(),
+            connection_id: entry.value().connection_id.clone(),
+            relay_address: relay_address.to_string(),
+            metadata: entry.value().metadata.clone(),
+        })
+        .collect()
+}
+
 /// Build Relay telemetry payload (minimum required fields).
 fn build_relay_telemetry_payload(
     relay_id: &str,
     relay_address: &str,
     relay_state: &Arc<RelayState>,
     resource_monitor: &ResourceMonitor,
+    runtime: &MqttRuntimeState,
     mqtt_publish_failures_total: u64,
     telemetry_interval_seconds: u64,
 ) -> serde_json::Value {
@@ -393,7 +472,10 @@ fn build_relay_telemetry_payload(
             "mqtt_queue_pending": 0
         },
         "mqtt_metrics": {
-            "telemetry_interval_seconds": telemetry_interval_seconds
+            "telemetry_interval_seconds": telemetry_interval_seconds,
+            "mqtt_connected": runtime.is_connected(),
+            "mqtt_reconnect_count": runtime.reconnect_count(),
+            "mqtt_dropped_total": runtime.dropped_total()
         },
         "health_status": health_status
     })
@@ -403,4 +485,80 @@ fn now_rfc3339() -> String {
     OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+#[cfg(test)]
+pub(crate) fn test_publisher() -> (MqttPublisher, mpsc::Receiver<MqttPublishRequest>) {
+    let runtime = MqttRuntimeState::new(true);
+    let (tx, rx) = mpsc::channel(16);
+    (MqttPublisher { tx, runtime }, rx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_relay_telemetry_payload, online_session_snapshot, MqttRuntimeState};
+    use crate::resource_monitor::ResourceMonitor;
+    use crate::state::{DeviceSession, RelayState};
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use tokio::sync::mpsc;
+
+    fn test_resource_monitor() -> ResourceMonitor {
+        ResourceMonitor::new(&crate::config::RateLimitConfig::default())
+    }
+
+    #[test]
+    fn online_session_snapshot_contains_all_sessions() {
+        let state = Arc::new(RelayState::new());
+        let (tx, _rx) = mpsc::channel(1);
+
+        state.sessions_by_device_id.insert(
+            "dev-1".into(),
+            DeviceSession {
+                device_id: "dev-1".into(),
+                connection_id: "conn-1".into(),
+                metadata: HashMap::from([("region".into(), "test".into())]),
+                outbound_tx: tx,
+            },
+        );
+
+        let snapshot = online_session_snapshot(&state, "relay-test:50051");
+        assert_eq!(snapshot.len(), 1);
+        match &snapshot[0] {
+            super::MqttPublishRequest::DeviceOnline {
+                device_id,
+                connection_id,
+                relay_address,
+                metadata,
+            } => {
+                assert_eq!(device_id, "dev-1");
+                assert_eq!(connection_id, "conn-1");
+                assert_eq!(relay_address, "relay-test:50051");
+                assert_eq!(metadata.get("region").map(String::as_str), Some("test"));
+            }
+            other => panic!("unexpected snapshot event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn relay_telemetry_contains_runtime_mqtt_fields() {
+        let state = Arc::new(RelayState::new());
+        let runtime = MqttRuntimeState::new(true);
+        runtime.set_connected(true);
+        runtime.increment_reconnect_count();
+
+        let payload = build_relay_telemetry_payload(
+            "relay-test",
+            "127.0.0.1:50051",
+            &state,
+            &test_resource_monitor(),
+            &runtime,
+            3,
+            10,
+        );
+
+        assert_eq!(payload["mqtt_metrics"]["mqtt_connected"], true);
+        assert_eq!(payload["mqtt_metrics"]["mqtt_reconnect_count"], 1);
+        assert_eq!(payload["mqtt_metrics"]["telemetry_interval_seconds"], 10);
+    }
 }
