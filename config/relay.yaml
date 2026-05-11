@@ -47,6 +47,13 @@ relay:
     cpu_threshold_percent: 80.0
     memory_threshold_mb: 12288
 
+  mqtt:
+    enabled: true
+    broker_address: "localhost:1883"
+    telemetry_interval_seconds: 10
+    reconnect_initial_seconds: 1
+    reconnect_max_seconds: 30
+
 observability:
   logging:
     level: info

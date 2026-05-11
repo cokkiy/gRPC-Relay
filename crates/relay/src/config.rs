@@ -28,6 +28,8 @@ pub struct RelayConfig {
     #[serde(default)]
     pub auth: AuthConfig,
     #[serde(default)]
+    pub mqtt: MqttConfig,
+    #[serde(default)]
     pub tls: TlsConfig,
 }
 
@@ -106,6 +108,18 @@ pub struct AuthConfig {
     pub jwt: JwtConfig,
 }
 
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_auth_enabled(),
+            controller_tokens: Default::default(),
+            device_tokens: Default::default(),
+            method_whitelist: Vec::new(),
+            jwt: JwtConfig::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct JwtConfig {
     #[serde(default)]
@@ -118,6 +132,18 @@ pub struct JwtConfig {
     pub audience: Option<String>,
     #[serde(default = "default_jwt_clock_skew_seconds")]
     pub clock_skew_seconds: u64,
+}
+
+impl Default for JwtConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            hs256_secret: String::new(),
+            issuer: None,
+            audience: None,
+            clock_skew_seconds: default_jwt_clock_skew_seconds(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -133,6 +159,39 @@ pub struct ControllerAuthEntry {
 pub struct DeviceAuthEntry {
     pub device_id: String,
     pub project_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MqttConfig {
+    /// Whether Relay maintains an MQTT connection and publishes discovery/telemetry.
+    #[serde(default = "default_mqtt_enabled")]
+    pub enabled: bool,
+
+    /// MQTT broker address (e.g. localhost:1883).
+    #[serde(default = "default_mqtt_broker_address")]
+    pub broker_address: String,
+
+    /// MQTT client id. If empty, Relay will derive one from `relay.id`.
+    #[serde(default)]
+    pub client_id: Option<String>,
+
+    /// Username/password for broker authentication (optional).
+    #[serde(default)]
+    pub username: Option<String>,
+    #[serde(default)]
+    pub password: Option<String>,
+
+    /// How often Relay publishes `telemetry/relay/{relay_id}`.
+    #[serde(default = "default_mqtt_telemetry_interval_seconds")]
+    pub telemetry_interval_seconds: u64,
+
+    /// Initial reconnect delay (seconds) after MQTT disconnect/failure.
+    #[serde(default = "default_mqtt_reconnect_initial_seconds")]
+    pub reconnect_initial_seconds: u64,
+
+    /// Max reconnect delay (seconds) after repeated failures.
+    #[serde(default = "default_mqtt_reconnect_max_seconds")]
+    pub reconnect_max_seconds: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -224,6 +283,21 @@ impl Default for HealthConfig {
             enabled: default_health_enabled(),
             address: default_health_address(),
             path: default_health_path(),
+        }
+    }
+}
+
+impl Default for MqttConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_mqtt_enabled(),
+            broker_address: default_mqtt_broker_address(),
+            client_id: None,
+            username: None,
+            password: None,
+            telemetry_interval_seconds: default_mqtt_telemetry_interval_seconds(),
+            reconnect_initial_seconds: default_mqtt_reconnect_initial_seconds(),
+            reconnect_max_seconds: default_mqtt_reconnect_max_seconds(),
         }
     }
 }
@@ -354,30 +428,26 @@ fn default_auth_enabled() -> bool {
     false
 }
 
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            enabled: default_auth_enabled(),
-            controller_tokens: Default::default(),
-            device_tokens: Default::default(),
-            method_whitelist: Vec::new(),
-            jwt: JwtConfig::default(),
-        }
-    }
-}
-
-impl Default for JwtConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            hs256_secret: String::new(),
-            issuer: None,
-            audience: None,
-            clock_skew_seconds: default_jwt_clock_skew_seconds(),
-        }
-    }
-}
-
 fn default_jwt_clock_skew_seconds() -> u64 {
+    30
+}
+
+fn default_mqtt_enabled() -> bool {
+    false
+}
+
+fn default_mqtt_broker_address() -> String {
+    "localhost:1883".to_string()
+}
+
+fn default_mqtt_telemetry_interval_seconds() -> u64 {
+    30
+}
+
+fn default_mqtt_reconnect_initial_seconds() -> u64 {
+    1
+}
+
+fn default_mqtt_reconnect_max_seconds() -> u64 {
     30
 }
