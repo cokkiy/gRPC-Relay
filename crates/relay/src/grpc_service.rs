@@ -117,8 +117,10 @@ impl RelayGrpcService {
     {
         let mut current_device_id: Option<String> = None;
         let mut disconnect_reason = "timeout";
+        let mut saw_message = false;
 
         while let Some(next_message) = inbound.next().await {
+            saw_message = true;
             let Ok(dev_msg) = next_message else {
                 disconnect_reason = "error";
                 break;
@@ -314,6 +316,10 @@ impl RelayGrpcService {
                 }
                 None => {}
             }
+        }
+
+        if saw_message && disconnect_reason == "timeout" {
+            disconnect_reason = "graceful_shutdown";
         }
 
         if let Some(ref did) = current_device_id {
@@ -677,6 +683,7 @@ mod tests {
         AppConfig, AuthConfig, HealthConfig, IdempotencyConfig, JwtConfig, LoggingConfig,
         ObservabilityConfig, RateLimitConfig, RelayConfig, StreamConfig,
     };
+    use crate::mqtt;
     use jsonwebtoken::{encode, EncodingKey, Header};
     use relay_proto::relay::v1::relay_message;
     use relay_proto::relay::v1::{DataResponse, RegisterRequest};
@@ -740,6 +747,25 @@ mod tests {
             None,
         );
         (service, state)
+    }
+
+    fn service_with_mqtt(
+        config: AppConfig,
+    ) -> (
+        RelayGrpcService,
+        Arc<RelayState>,
+        mpsc::Receiver<mqtt::MqttPublishRequest>,
+    ) {
+        let state = Arc::new(RelayState::new());
+        let (publisher, rx) = mqtt::test_publisher();
+        let service = RelayGrpcService::new(
+            state.clone(),
+            &config,
+            crate::security_metrics::SecurityMetrics::default(),
+            crate::resource_monitor::ResourceMonitor::new(&config.relay.rate_limiting),
+            Some(publisher),
+        );
+        (service, state, rx)
     }
 
     async fn start_device_loop(
@@ -1107,6 +1133,35 @@ mod tests {
         assert_eq!(idle_offline.error, ErrorCode::DeviceOffline as i32);
         assert_eq!(inflight_offline.sequence_number, 2);
         assert_eq!(inflight_offline.error, ErrorCode::DeviceOffline as i32);
+    }
+
+    #[tokio::test]
+    async fn clean_device_disconnect_publishes_graceful_shutdown() {
+        let (service, _state, mut mqtt_rx) = service_with_mqtt(test_config());
+        let (device_tx, _device_stream, _connection_id) = start_device_loop(&service, "dev-1").await;
+
+        let online = mqtt_rx.recv().await.unwrap();
+        match online {
+            mqtt::MqttPublishRequest::DeviceOnline { device_id, .. } => {
+                assert_eq!(device_id, "dev-1");
+            }
+            other => panic!("unexpected mqtt event: {other:?}"),
+        }
+
+        drop(device_tx);
+
+        let offline = mqtt_rx.recv().await.unwrap();
+        match offline {
+            mqtt::MqttPublishRequest::DeviceOffline {
+                device_id,
+                reason,
+                ..
+            } => {
+                assert_eq!(device_id, "dev-1");
+                assert_eq!(reason, "graceful_shutdown");
+            }
+            other => panic!("unexpected mqtt event: {other:?}"),
+        }
     }
 
     #[tokio::test]
