@@ -7,6 +7,7 @@ use tracing::info;
 
 use tokio::net::TcpListener;
 
+use crate::mqtt::MqttRuntimeState;
 use crate::resource_monitor::ResourceMonitor;
 use crate::security_metrics::{SecurityMetrics, SecurityMetricsSnapshot};
 use crate::{config::HealthConfig, AppError, Result};
@@ -17,6 +18,7 @@ pub struct HealthState {
     version: &'static str,
     security_metrics: SecurityMetrics,
     resource_monitor: ResourceMonitor,
+    mqtt_runtime: MqttRuntimeState,
 }
 
 impl HealthState {
@@ -24,12 +26,14 @@ impl HealthState {
         version: &'static str,
         security_metrics: SecurityMetrics,
         resource_monitor: ResourceMonitor,
+        mqtt_runtime: MqttRuntimeState,
     ) -> Self {
         Self {
             started_at: Instant::now(),
             version,
             security_metrics,
             resource_monitor,
+            mqtt_runtime,
         }
     }
 }
@@ -104,6 +108,7 @@ pub async fn serve_health(
     version: &'static str,
     security_metrics: SecurityMetrics,
     resource_monitor: ResourceMonitor,
+    mqtt_runtime: MqttRuntimeState,
 ) -> Result<()> {
     if !config.enabled {
         info!("health server disabled");
@@ -119,7 +124,7 @@ pub async fn serve_health(
                 source,
             })?;
 
-    let state = HealthState::new(version, security_metrics, resource_monitor);
+    let state = HealthState::new(version, security_metrics, resource_monitor, mqtt_runtime);
     let app = Router::new()
         .route(&config.path, get(health))
         .route("/metrics/security", get(security_metrics_handler))
@@ -143,32 +148,44 @@ pub async fn serve_health(
 async fn health(
     axum::extract::State(state): axum::extract::State<HealthState>,
 ) -> Json<HealthResponse> {
-    // MVP skeleton：目前只有 health 服务本身，其他组件尚未落地。
-    // 为了满足协议契约，这里返回结构完整的 response，并在字段里标明未实现/不可用。
     let timestamp = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
 
+    let mqtt_client = if !state.mqtt_runtime.enabled() {
+        ComponentHealth {
+            status: "healthy",
+            message: "MQTT disabled by config",
+        }
+    } else if state.mqtt_runtime.is_connected() {
+        ComponentHealth {
+            status: "healthy",
+            message: "MQTT connected",
+        }
+    } else {
+        ComponentHealth {
+            status: "degraded",
+            message: "MQTT disconnected; gRPC discovery fallback required",
+        }
+    };
+
     let components = HealthComponents {
         grpc_server: ComponentHealth {
-            status: "unhealthy",
-            message: "gRPC server not implemented (MVP skeleton)",
+            status: "healthy",
+            message: "gRPC server running",
         },
         quic_listener: ComponentHealth {
-            status: "unhealthy",
-            message: "QUIC listener not implemented (MVP skeleton)",
+            status: "degraded",
+            message: "QUIC listener not implemented",
         },
-        mqtt_client: ComponentHealth {
-            status: "unhealthy",
-            message: "MQTT client not implemented (MVP skeleton)",
-        },
+        mqtt_client,
         auth_service: ComponentHealth {
-            status: "unhealthy",
-            message: "auth service not implemented (MVP skeleton)",
+            status: "healthy",
+            message: "auth service running",
         },
         metrics_collector: ComponentHealth {
-            status: "unhealthy",
-            message: "metrics collector not implemented (MVP skeleton)",
+            status: "healthy",
+            message: "metrics collector running",
         },
     };
 
@@ -198,7 +215,11 @@ async fn security_metrics_handler(
 
 #[cfg(test)]
 mod tests {
-    use super::{derive_overall_status, ComponentHealth, HealthComponents};
+    use super::{derive_overall_status, health, ComponentHealth, HealthComponents, HealthState};
+    use crate::mqtt::MqttRuntimeState;
+    use crate::resource_monitor::ResourceMonitor;
+    use crate::security_metrics::SecurityMetrics;
+    use axum::{extract::State, Json};
 
     fn component(status: &'static str) -> ComponentHealth {
         ComponentHealth {
@@ -246,5 +267,37 @@ mod tests {
         value.grpc_server = component("unknown");
 
         assert_eq!(derive_overall_status(&value), "unhealthy");
+    }
+
+    #[tokio::test]
+    async fn health_reports_mqtt_disabled_as_healthy_component() {
+        let state = HealthState::new(
+            "test",
+            SecurityMetrics::default(),
+            ResourceMonitor::new(&crate::config::RateLimitConfig::default()),
+            MqttRuntimeState::new(false),
+        );
+
+        let Json(response) = health(State(state)).await;
+        let value = serde_json::to_value(response).unwrap();
+
+        assert_eq!(value["components"]["mqtt_client"]["status"], "healthy");
+        assert_eq!(value["status"], "degraded");
+    }
+
+    #[tokio::test]
+    async fn health_reports_mqtt_disconnected_as_degraded_component() {
+        let state = HealthState::new(
+            "test",
+            SecurityMetrics::default(),
+            ResourceMonitor::new(&crate::config::RateLimitConfig::default()),
+            MqttRuntimeState::new(true),
+        );
+
+        let Json(response) = health(State(state)).await;
+        let value = serde_json::to_value(response).unwrap();
+
+        assert_eq!(value["components"]["mqtt_client"]["status"], "degraded");
+        assert_eq!(value["status"], "degraded");
     }
 }

@@ -19,6 +19,7 @@ axum = { workspace = true, features = ["tokio"] }
 hyper = { workspace = true }
 time = { workspace = true }
 jsonwebtoken = { workspace = true }
+rumqttc = "0.24"
 
 # gRPC server + streaming
 tonic = { version = "0.11", features = ["transport", "tls"] }
