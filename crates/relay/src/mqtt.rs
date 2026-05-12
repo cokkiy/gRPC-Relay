@@ -14,6 +14,8 @@ use time::OffsetDateTime;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
+const MQTT_PUBLISH_QUEUE_CAPACITY: usize = 256;
+
 #[derive(Debug)]
 pub enum MqttPublishRequest {
     DeviceOnline {
@@ -162,7 +164,6 @@ pub fn spawn_mqtt_publisher(
     resource_monitor: ResourceMonitor,
     runtime: MqttRuntimeState,
 ) -> MqttHandles {
-    const MQTT_PUBLISH_QUEUE_CAPACITY: usize = 256;
     let runtime_for_task = runtime.clone();
     // Bounded queue to avoid unbounded memory growth when MQTT is down.
     let (tx, mut rx) = mpsc::channel::<MqttPublishRequest>(MQTT_PUBLISH_QUEUE_CAPACITY);
@@ -266,22 +267,17 @@ async fn run_mqtt_session(
     ));
     telemetry_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-    let mut mqtt_publish_failures_total: u64 = 0;
     let mut pending_requests: VecDeque<MqttPublishRequest> = VecDeque::new();
-    const MQTT_PUBLISH_QUEUE_CAPACITY: usize = 256;
 
     loop {
         if runtime.is_connected() && !pending_requests.is_empty() {
             let req = pending_requests
                 .pop_front()
-                .expect("pending_requests must not be empty");
-            publish_device_event(client.clone(), req, relay_address, relay_id)
-                .await
-                .map_err(|e| {
-                    runtime.decrement_queue_pending();
-                    mqtt_publish_failures_total += 1;
-                    e
-                })?;
+                .expect("pending_requests was checked non-empty before pop_front; logic error");
+            if let Err(e) = publish_device_event(client.clone(), req, relay_address, relay_id).await {
+                runtime.decrement_queue_pending();
+                return Err(e);
+            }
             runtime.decrement_queue_pending();
             continue;
         }
@@ -323,13 +319,10 @@ async fn run_mqtt_session(
                 };
 
                 if runtime.is_connected() && pending_requests.is_empty() {
-                    publish_device_event(client.clone(), req, relay_address, relay_id)
-                        .await
-                        .map_err(|e| {
-                            runtime.decrement_queue_pending();
-                            mqtt_publish_failures_total += 1;
-                            e
-                        })?;
+                    if let Err(e) = publish_device_event(client.clone(), req, relay_address, relay_id).await {
+                        runtime.decrement_queue_pending();
+                        return Err(e);
+                    }
                     runtime.decrement_queue_pending();
                 } else {
                     if pending_requests.len() >= MQTT_PUBLISH_QUEUE_CAPACITY {
@@ -352,7 +345,7 @@ async fn run_mqtt_session(
                     relay_state,
                     resource_monitor,
                     runtime,
-                    mqtt_publish_failures_total,
+                    0,
                     cfg.telemetry_interval_seconds,
                 );
 
