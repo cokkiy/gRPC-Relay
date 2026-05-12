@@ -116,11 +116,10 @@ impl RelayGrpcService {
         S: Stream<Item = Result<DeviceMessage, Status>> + Unpin,
     {
         let mut current_device_id: Option<String> = None;
-        let mut disconnect_reason = "timeout";
-        let mut saw_message = false;
+        let mut current_connection_id: Option<String> = None;
+        let mut disconnect_reason = "closed";
 
         while let Some(next_message) = inbound.next().await {
-            saw_message = true;
             let Ok(dev_msg) = next_message else {
                 disconnect_reason = "error";
                 break;
@@ -246,6 +245,7 @@ impl RelayGrpcService {
                         connection_id = %connection_id,
                         "device registered"
                     );
+                    current_connection_id = Some(connection_id.clone());
 
                     if let Some(ref mqtt) = mqtt_publisher {
                         mqtt.publish_device_online(
@@ -318,7 +318,7 @@ impl RelayGrpcService {
             }
         }
 
-        if saw_message && disconnect_reason == "timeout" {
+        if disconnect_reason == "closed" {
             disconnect_reason = "graceful_shutdown";
         }
 
@@ -341,22 +341,28 @@ impl RelayGrpcService {
                 }
             }
 
-            let connection_id = state
+            let current_session_connection_id = state
                 .sessions_by_device_id
                 .get(did.as_str())
                 .map(|s| s.connection_id.clone());
+            let matches_stream_connection = current_connection_id
+                .as_ref()
+                .zip(current_session_connection_id.as_ref())
+                .map(|(stream_cid, session_cid)| stream_cid == session_cid)
+                .unwrap_or(false);
 
-            if let Some(ref mqtt) = mqtt_publisher {
-                if let Some(ref cid) = connection_id {
-                    mqtt.publish_device_offline(
-                        did.clone(),
-                        cid.clone(),
-                        disconnect_reason.to_string(),
-                    );
+            if matches_stream_connection {
+                if let Some(ref mqtt) = mqtt_publisher {
+                    if let Some(ref cid) = current_session_connection_id {
+                        mqtt.publish_device_offline(
+                            did.clone(),
+                            cid.clone(),
+                            disconnect_reason.to_string(),
+                        );
+                    }
                 }
+                state.remove_device_session(did);
             }
-
-            state.remove_device_session(did);
         }
     }
 

@@ -4,6 +4,7 @@ use crate::state::RelayState;
 use rumqttc::{AsyncClient, Event, MqttOptions, Packet, QoS};
 use serde_json::json;
 use std::cmp::min;
+use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
@@ -34,6 +35,7 @@ pub struct MqttRuntimeState {
     connected: Arc<AtomicBool>,
     reconnect_count: Arc<AtomicU64>,
     dropped_total: Arc<AtomicU64>,
+    queue_pending: Arc<AtomicU64>,
 }
 
 impl MqttRuntimeState {
@@ -43,6 +45,7 @@ impl MqttRuntimeState {
             connected: Arc::new(AtomicBool::new(false)),
             reconnect_count: Arc::new(AtomicU64::new(0)),
             dropped_total: Arc::new(AtomicU64::new(0)),
+            queue_pending: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -62,6 +65,10 @@ impl MqttRuntimeState {
         self.dropped_total.load(Ordering::Relaxed)
     }
 
+    pub fn queue_pending(&self) -> u64 {
+        self.queue_pending.load(Ordering::Relaxed)
+    }
+
     fn set_connected(&self, value: bool) {
         self.connected.store(value, Ordering::Relaxed);
     }
@@ -72,6 +79,18 @@ impl MqttRuntimeState {
 
     fn increment_dropped_total(&self) {
         self.dropped_total.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn increment_queue_pending(&self) {
+        self.queue_pending.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn decrement_queue_pending(&self) {
+        self.queue_pending
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+                Some(v.saturating_sub(1))
+            })
+            .ok();
     }
 }
 
@@ -102,9 +121,10 @@ impl MqttPublisher {
             relay_address,
             metadata,
         };
-        let _ = self.tx.try_send(req).map_err(|_| {
-            self.runtime.increment_dropped_total();
-        });
+        match self.tx.try_send(req) {
+            Ok(()) => self.runtime.increment_queue_pending(),
+            Err(_) => self.runtime.increment_dropped_total(),
+        }
     }
 
     pub fn publish_device_offline(&self, device_id: String, connection_id: String, reason: String) {
@@ -113,10 +133,10 @@ impl MqttPublisher {
             connection_id,
             reason,
         };
-        let _ = self
-            .tx
-            .try_send(req)
-            .map_err(|_| self.runtime.increment_dropped_total());
+        match self.tx.try_send(req) {
+            Ok(()) => self.runtime.increment_queue_pending(),
+            Err(_) => self.runtime.increment_dropped_total(),
+        }
     }
 
     pub fn mqtt_dropped_total(&self) -> u64 {
@@ -142,9 +162,10 @@ pub fn spawn_mqtt_publisher(
     resource_monitor: ResourceMonitor,
     runtime: MqttRuntimeState,
 ) -> MqttHandles {
+    const MQTT_PUBLISH_QUEUE_CAPACITY: usize = 256;
     let runtime_for_task = runtime.clone();
     // Bounded queue to avoid unbounded memory growth when MQTT is down.
-    let (tx, mut rx) = mpsc::channel::<MqttPublishRequest>(256);
+    let (tx, mut rx) = mpsc::channel::<MqttPublishRequest>(MQTT_PUBLISH_QUEUE_CAPACITY);
 
     let publisher = MqttPublisher {
         tx,
@@ -235,7 +256,7 @@ async fn run_mqtt_session(
     let (client, mut eventloop) = AsyncClient::new(options, 10);
 
     info!(
-        event = "mqtt_connected",
+        event = "mqtt_connecting",
         relay_id = %relay_id,
         broker = %cfg.broker_address
     );
@@ -246,8 +267,25 @@ async fn run_mqtt_session(
     telemetry_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let mut mqtt_publish_failures_total: u64 = 0;
+    let mut pending_requests: VecDeque<MqttPublishRequest> = VecDeque::new();
+    const MQTT_PUBLISH_QUEUE_CAPACITY: usize = 256;
 
     loop {
+        if runtime.is_connected() && !pending_requests.is_empty() {
+            let req = pending_requests
+                .pop_front()
+                .expect("pending_requests must not be empty");
+            publish_device_event(client.clone(), req, relay_address, relay_id)
+                .await
+                .map_err(|e| {
+                    runtime.decrement_queue_pending();
+                    mqtt_publish_failures_total += 1;
+                    e
+                })?;
+            runtime.decrement_queue_pending();
+            continue;
+        }
+
         tokio::select! {
             ev = eventloop.poll() => {
                 match ev {
@@ -258,6 +296,11 @@ async fn run_mqtt_session(
                             *has_connected_once = true;
                         }
                         runtime.set_connected(true);
+                        info!(
+                            event = "mqtt_connected",
+                            relay_id = %relay_id,
+                            broker = %cfg.broker_address
+                        );
                         publish_online_session_snapshot(client.clone(), relay_state, relay_address).await?;
                     }
                     Ok(Event::Incoming(_)) => {}
@@ -271,21 +314,31 @@ async fn run_mqtt_session(
 
             maybe_req = rx.recv() => {
                 let Some(req) = maybe_req else {
+                    while pending_requests.pop_front().is_some() {
+                        runtime.increment_dropped_total();
+                        runtime.decrement_queue_pending();
+                    }
                     runtime.set_connected(false);
                     return Ok(());
                 };
 
-                if !runtime.is_connected() {
-                    // MQTT is down; drop requests.
-                    continue;
+                if runtime.is_connected() && pending_requests.is_empty() {
+                    publish_device_event(client.clone(), req, relay_address, relay_id)
+                        .await
+                        .map_err(|e| {
+                            runtime.decrement_queue_pending();
+                            mqtt_publish_failures_total += 1;
+                            e
+                        })?;
+                    runtime.decrement_queue_pending();
+                } else {
+                    if pending_requests.len() >= MQTT_PUBLISH_QUEUE_CAPACITY {
+                        pending_requests.pop_front();
+                        runtime.increment_dropped_total();
+                        runtime.decrement_queue_pending();
+                    }
+                    pending_requests.push_back(req);
                 }
-
-                publish_device_event(client.clone(), req, relay_address, relay_id)
-                    .await
-                    .map_err(|e| {
-                        mqtt_publish_failures_total += 1;
-                        e
-                    })?;
             }
 
             _ = telemetry_interval.tick() => {
@@ -323,21 +376,45 @@ fn checked_pow2(attempt: u32) -> u64 {
 }
 
 fn parse_host_port(broker_address: &str) -> Result<(String, u16), String> {
-    let mut parts = broker_address.split(':');
-    let host = parts
+    let authority = broker_address
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(broker_address)
+        .split('/')
         .next()
-        .ok_or_else(|| "broker_address missing host".to_string())?
-        .to_string();
-    let port_str = parts
-        .next()
+        .unwrap_or("");
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+
+    if authority.is_empty() {
+        return Err("broker_address missing host".to_string());
+    }
+
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (host, suffix) = rest
+            .split_once(']')
+            .ok_or_else(|| "broker_address has invalid IPv6 format".to_string())?;
+        let port_str = suffix
+            .strip_prefix(':')
+            .ok_or_else(|| "broker_address missing port".to_string())?;
+        let port: u16 = port_str
+            .parse()
+            .map_err(|_| "broker_address port must be a number".to_string())?;
+        return Ok((host.to_string(), port));
+    }
+
+    let (host, port_str) = authority
+        .rsplit_once(':')
         .ok_or_else(|| "broker_address missing port".to_string())?;
-    if parts.next().is_some() {
-        return Err("broker_address must be host:port".to_string());
+    if host.is_empty() {
+        return Err("broker_address missing host".to_string());
+    }
+    if host.contains(':') {
+        return Err("IPv6 broker_address must use [host]:port format".to_string());
     }
     let port: u16 = port_str
         .parse()
         .map_err(|_| "broker_address port must be a number".to_string())?;
-    Ok((host, port))
+    Ok((host.to_string(), port))
 }
 
 async fn publish_device_event(
@@ -469,7 +546,7 @@ fn build_relay_telemetry_payload(
             "mqtt_publish_failures_total": mqtt_publish_failures_total
         },
         "queue_metrics": {
-            "mqtt_queue_pending": 0
+            "mqtt_queue_pending": runtime.queue_pending()
         },
         "mqtt_metrics": {
             "telemetry_interval_seconds": telemetry_interval_seconds,
@@ -496,7 +573,7 @@ pub(crate) fn test_publisher() -> (MqttPublisher, mpsc::Receiver<MqttPublishRequ
 
 #[cfg(test)]
 mod tests {
-    use super::{build_relay_telemetry_payload, online_session_snapshot, MqttRuntimeState};
+    use super::{build_relay_telemetry_payload, online_session_snapshot, parse_host_port, MqttRuntimeState};
     use crate::resource_monitor::ResourceMonitor;
     use crate::state::{DeviceSession, RelayState};
     use std::collections::HashMap;
@@ -546,6 +623,7 @@ mod tests {
         let runtime = MqttRuntimeState::new(true);
         runtime.set_connected(true);
         runtime.increment_reconnect_count();
+        runtime.increment_queue_pending();
 
         let payload = build_relay_telemetry_payload(
             "relay-test",
@@ -560,5 +638,15 @@ mod tests {
         assert_eq!(payload["mqtt_metrics"]["mqtt_connected"], true);
         assert_eq!(payload["mqtt_metrics"]["mqtt_reconnect_count"], 1);
         assert_eq!(payload["mqtt_metrics"]["telemetry_interval_seconds"], 10);
+        assert_eq!(payload["queue_metrics"]["mqtt_queue_pending"], 1);
+    }
+
+    #[test]
+    fn parse_host_port_supports_mqtt_url_and_ipv6() {
+        let with_scheme = parse_host_port("mqtt://broker.example.com:1883").unwrap();
+        assert_eq!(with_scheme, ("broker.example.com".to_string(), 1883));
+
+        let ipv6 = parse_host_port("[::1]:1883").unwrap();
+        assert_eq!(ipv6, ("::1".to_string(), 1883));
     }
 }
