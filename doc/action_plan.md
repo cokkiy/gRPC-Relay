@@ -429,16 +429,300 @@
 ### 8) 观测性与运维接口
 **目标**：补齐生产可用性基础。
 
-**交付物**
-- `/health` 健康检查
-- `/metrics` 指标导出
-- 结构化日志
-- 审计日志
-- tracing 接入预留
-- 告警阈值配置结构
+**当前状态总览**：
+- ✅ `/health` — 已实现（`crates/relay/src/observability.rs`：HealthState / ComponentHealth / HealthResponse，含 MQTT 状态判定与 resource 阈值判定）
+- ✅ `/metrics/security` — 已实现（`crates/relay/src/security_metrics.rs`：AtomicU64 计数器 + ratio snapshot）
+- ✅ 结构化日志 — 已实现（`crates/relay/src/logging.rs`：tracing-subscriber，支持 JSON/text 格式 + EnvFilter）
+- ✅ 资源监控 — 已实现（`crates/relay/src/resource_monitor.rs`：CPU / 内存阈值检查，供 health 与 telemetry 复用）
+- ✅ Relay MQTT 遥测 — 已实现（`crates/relay/src/mqtt.rs::build_relay_telemetry_payload`：system/connection/stream/performance/error/queue/mqtt/health 八大类指标，每 30s 发布到 `telemetry/relay/{relay_id}`）
+- ✅ MQTT runtime 状态追踪 — 已实现（`MqttRuntimeState`：连接状态 / 重连次数 / 丢弃数 / 队列深度，供 health 和 telemetry 消费）
+- ❌ Prometheus `/metrics` endpoint — 当前 MVP 暂缓（需求文档明确："当前 MVP 实现仅保证 `/health` 可用，`/metrics` endpoint 暂缓到后续迭代"）
+- ❌ 审计日志 — 未实现（需求 7.4 节定义了完整的审计日志格式、事件类型清单、脱敏规则）
+- ❌ OpenTelemetry 分布式追踪 — 未实现（需求 7.4 节定义了 trace 结构和 span 属性）
+- ❌ 告警阈值配置与通知 — 未实现（需求 7.4 节定义了告警阈值规则表和通知渠道）
+
+---
+
+#### 8.1 审计日志（Audit Logs）
+
+**目标**：实现需求 7.4 节定义的审计日志体系——结构化 JSON 输出、事件类型齐全、脱敏规则到位、不记录加密 payload。
+
+##### 8.1.1 审计事件类型（需求节选）
+
+需要落地的 15 种事件类型（按需求 7.4 审计日志事件类型清单）：
+
+| 事件类型 | 触发条件 | 优先级 |
+|---|---|---|
+| `device_connect` | 设备成功建立连接 | P0 |
+| `device_disconnect` | 设备主动断开或超时 | P0 |
+| `device_register` | 设备首次注册或重新注册 | P0 |
+| `controller_connect` | Controller 成功建立连接 | P0 |
+| `controller_disconnect` | Controller 主动断开 | P1 |
+| `controller_request` | Controller 发起设备访问请求 | P0 |
+| `stream_created` | 新的双向流建立 | P0 |
+| `stream_closed` | 流正常或异常关闭 | P0 |
+| `auth_failure` | Token 验证失败或证书无效 | P0 |
+| `auth_success` | 认证通过 | P1 |
+| `authorization_denied` | 权限检查失败 | P0 |
+| `rate_limit` | 请求频率超过限制 | P0 |
+| `session_resumed` | 设备重连后成功恢复会话 | P1 |
+| `session_expired` | 会话超时被清理 | P1 |
+| `error` | Relay 内部异常 | P0 |
+
+##### 8.1.2 审计日志结构（需求定义）
+
+```json
+{
+  "timestamp": "2025-01-15T10:30:00.123Z",
+  "event_type": "device_connect",
+  "relay_id": "relay-001",
+  "device_id": "device-001",
+  "controller_id": "controller-123",
+  "connection_id": "conn-12345",
+  "method_name": "ExecuteCommand",
+  "sequence_number": 98765,
+  "result": "success",
+  "error_code": "OK",
+  "latency_ms": 15.6,
+  "bytes_transferred": 10240,
+  "source_ip": "192.168.1.100",
+  "user_agent": "controller-client/1.0",
+  "metadata": {
+    "region": "us-west",
+    "device_type": "iot-sensor",
+    "project_id": "proj-456"
+  }
+}
+```
+
+**脱敏规则**：
+- 不记录 `encrypted_payload` 明文
+- Token 只记录前 8 位（如 `abcd1234...`）
+- 不记录私钥或敏感个人信息
+
+##### 8.1.3 实现方案
+
+**模块位置**：新建 `crates/relay/src/audit.rs`
+
+**核心类型**：
+
+```rust
+// 审计事件枚举 — 每种事件携带其专属字段
+enum AuditEvent {
+    DeviceConnect { device_id, connection_id, source_ip, metadata },
+    DeviceDisconnect { device_id, connection_id, reason, source_ip },
+    DeviceRegister { device_id, connection_id, previous_connection_id, session_resumed },
+    ControllerConnect { controller_id, source_ip, user_agent },
+    ControllerDisconnect { controller_id },
+    ControllerRequest { controller_id, device_id, method_name, sequence_number, payload_size, latency_ms, result, error_code },
+    StreamCreated { stream_id, device_id, controller_id, method_name },
+    StreamClosed { stream_id, reason, bytes_transferred },
+    AuthFailure { entity_type, entity_id, reason, source_ip },
+    AuthSuccess { entity_type, entity_id },
+    AuthorizationDenied { controller_id, device_id, method_name },
+    RateLimit { entity_type, entity_id, limit_kind },
+    SessionResumed { device_id, old_connection_id, new_connection_id },
+    SessionExpired { device_id, connection_id },
+    Error { message, error_code, context },
+}
+```
+
+**输出策略**：
+- **Writer 抽象**：trait `AuditWriter`（支持文件写入 / stdout / 后续扩展 Kafka/ES）
+- **默认实现**：`FileAuditWriter` — 行分隔 JSON（JSONL），每行一个事件
+- **异步写入**：通过 `tokio::sync::mpsc` 通道解耦，避免阻塞热路径
+- **文件轮转**：基于大小的轮转（默认 100 MB → `audit.log.1`, `audit.log.2` 等，最多 10 个）
+  - 若需要压缩则 gzip 历史文件
+
+**配置新增（`ObservabilityConfig` 下）**：
+
+```yaml
+observability:
+  audit:
+    enabled: true
+    output: file              # file | stdout
+    file_path: /var/log/relay/audit.log
+    max_size_mb: 100          # 单个文件最大 100 MB
+    max_backups: 10            # 最多保留 10 个历史文件
+    retention_days: 30         # 保留 30 天
+    # 可选的事件过滤（只记录指定类型）
+    events:
+      - device_connect
+      - device_disconnect
+      - controller_request
+      - auth_failure
+      - rate_limit
+```
+
+**依赖注入**：`AuditLogger` 作为共享状态（`Arc<AuditLogger>`）注入到：
+- `DeviceConnect` 流处理（设备注册/心跳超时/断连时发出事件）
+- `ConnectToDevice` 流处理（流创建/关闭/转发时发出事件）
+- Auth 模块（认证成功/失败时发出事件）
+- RBAC 模块（授权拒绝时发出事件）
+- Rate limiter（限流触发时发出事件）
+- Session manager（会话恢复/过期时发出事件）
+
+**验收标准**：
+- [ ] 15 种事件类型至少在集成测试中覆盖 10 种核心事件
+- [ ] 输出格式为合法 JSONL，每行可独立解析
+- [ ] 脱敏验证：日志中不出现完整 Token（仅前 8 位）、不出现 payload 内容
+- [ ] 异步写入不影响请求延迟（P99 < 20ms 保持）
+- [ ] 文件轮转：超过 100 MB 自动轮转，历史文件不超过 10 个
+
+---
+
+#### 8.2 Prometheus `/metrics` Endpoint（后续迭代暂缓，此处仅定义接口契约）
+
+**状态**：需求文档明确 MVP 暂缓。本节省略实现细节，仅保留接口契约供后续参考。
+
+**契约要点**（来自需求 7.4 节完整指标清单）：
+- Connection metrics: `relay_active_connections`, `relay_connection_duration_seconds`, `relay_connection_rate`, `relay_connections_by_region`
+- Stream metrics: `relay_active_streams`, `relay_stream_duration_seconds`, `relay_stream_errors_total`
+- Latency metrics: `relay_request_latency_seconds` (histogram), `relay_queue_wait_time_seconds`
+- Throughput metrics: `relay_bytes_transferred_total`, `relay_requests_total`
+- Error metrics: `relay_errors_total`, `relay_auth_failures_total`, `relay_rate_limit_hits_total`
+- Resource metrics: `relay_cpu_usage_percent`, `relay_memory_used_bytes`, `relay_open_file_descriptors`, `relay_goroutines`
+- Queue metrics: `relay_pending_messages`, `relay_queue_overflow_total`
+- MQTT metrics: `relay_mqtt_connected`, `relay_mqtt_publish_rate`, `relay_mqtt_reconnect_total`
+- Health: `relay_health_status`, `relay_component_health`
+
+**后续落地时需要的步骤**：
+1. 引入 `prometheus` crate（或 `opentelemetry-prometheus`）
+2. 注册 Registry + 各指标（Counter / Gauge / Histogram）
+3. 在 `serve_health` 的 axum Router 上挂载 `/metrics` route（`axum::routing::get(metrics_handler)`）
+4. Metrics handler 调用 `prometheus::TextEncoder` 输出 OpenMetrics 文本格式
+5. 在 Relay 各模块埋点（connection open/close、stream create/destroy、rate limit hit 等）
+6. 更新 `doc/protocol_spec.md` 与 action_plan 完成状态
+
+---
+
+#### 8.3 OpenTelemetry 分布式追踪（后续迭代，此处仅定义接入点）
+
+**状态**：需求 7.4 节定义了完整 trace 结构和 span 属性，当前未实现。
+
+**Trace 结构回顾**（需求定义）：
+```
+Trace: controller_request_to_device
+├─ Span: controller_connect (Controller → Relay)
+│  ├─ Span: auth_verify
+│  └─ Span: permission_check
+├─ Span: relay_route
+├─ Span: relay_forward (Relay → Device)
+│  ├─ Span: queue_wait
+│  └─ Span: network_send
+├─ Span: device_process
+└─ Span: relay_response
+```
+
+**后续落地步骤**：
+1. 引入 `opentelemetry` + `opentelemetry-otlp` + `tracing-opentelemetry` crates
+2. 在 `logging::init` 中叠加 OpenTelemetry layer（采样率默认 0.1）
+3. 在 gRPC 请求入口、auth 校验、stream forward、MQTT publish 等关键路径添加 `#[tracing::instrument]` 宏
+4. Span 属性注入：`relay.id`, `device.id`, `controller.id`, `connection.id`, `method.name`, `sequence.number`
+5. 通过 OTLP exporter 导出到 Jaeger / Tempo
+6. 配置项新增（`ObservabilityConfig` 下）：`tracing.enabled`, `tracing.sampling_rate`, `tracing.exporter`, `tracing.otlp_endpoint`
+
+---
+
+#### 8.4 告警阈值与通知（后续迭代，此处定义配置结构）
+
+**状态**：需求 7.4 节定义了完整的告警规则表（阈值/级别/处理建议）和通知渠道，未实现。
+
+**告警规则回顾**（需求 7.4 节 14 条告警规则）：
+
+| 指标 | Warning 阈值 | Critical 阈值 |
+|---|---|---|
+| 错误率 | > 1% | > 5% |
+| P99 延迟 | > 50ms | > 100ms |
+| 连接失败率 | > 5% | > 10% |
+| CPU | > 80% | > 95% |
+| 内存 | > 85% | > 95% |
+| 活跃连接数 | > 9000 | > 9500 |
+| 队列深度 | > 5000 | > 8000 |
+| MQTT 断连 | > 30s | > 60s |
+| 认证失败率 | > 10/min | > 50/min |
+
+**配置结构**（供后续实现直接使用，加在 `ObservabilityConfig` 下）：
+
+```yaml
+observability:
+  alerting:
+    enabled: true
+    channels:
+      - type: slack
+        webhook_url_file: /etc/relay/secrets/slack_webhook
+        severity: warning,critical
+      - type: email
+        smtp_server: smtp.example.com:587
+        from: relay-alerts@example.com
+        to: ops-team@example.com
+        severity: critical
+    rules:
+      - name: high_error_rate
+        condition: error_rate > 0.05
+        severity: critical
+        message: "Error rate exceeded 5%"
+      - name: high_latency
+        condition: p99_latency_ms > 100
+        severity: critical
+        message: "P99 latency exceeded 100ms"
+      - name: high_cpu_usage
+        condition: cpu_usage_percent > 80
+        severity: warning
+        message: "CPU usage exceeded 80%"
+      - name: mqtt_disconnected
+        condition: mqtt_connected == false
+        duration_seconds: 60
+        severity: critical
+        message: "MQTT broker disconnected for over 60 seconds"
+    # 抑制规则
+    suppression:
+      # 同一告警 5 分钟内只发一次
+      min_interval_seconds: 300
+      # 维护窗口抑制所有告警
+      maintenance_windows: []
+```
+
+**后续落地要点**：
+- AlertEvaluator 周期性（每 10-30s）评估规则条件
+- 告警状态机：OK → Warning → Critical，含冷却时间
+- Critical 抑制 Warning（同指标）
+- 通知渠道：Slack webhook / SMTP / 预留 PagerDuty
+
+---
+
+#### 8.5 补齐清单与执行顺序
+
+**本次 MVP 周期必须完成的（写入 action plan 8.1）**：
+
+| 序号 | 任务 | 说明 | 预估工作量 |
+|---|---|---|---|
+| 8.1.1 | 创建 `crates/relay/src/audit.rs` | AuditEvent 枚举 + AuditWriter trait + FileAuditWriter | 2-3 天 |
+| 8.1.2 | 审计配置结构 | `AuditConfig` 加到 `ObservabilityConfig` | 0.5 天 |
+| 8.1.3 | 在 Auth/RBAC 模块埋点 | 认证成功/失败、授权拒绝事件 | 0.5 天 |
+| 8.1.4 | 在 Connection 模块埋点 | 设备连接/断连/注册事件 | 0.5 天 |
+| 8.1.5 | 在 Stream 模块埋点 | 流创建/关闭、Controller 请求事件 | 0.5 天 |
+| 8.1.6 | 在 Rate Limiter 埋点 | 限流触发事件 | 0.5 天 |
+| 8.1.7 | 在 Session Manager 埋点 | 会话恢复/过期事件 | 0.5 天 |
+| 8.1.8 | 集成测试 | 验证审计日志格式、脱敏、轮转 | 1 天 |
+
+**后续迭代（P2 暂不执行）**：
+- Prometheus `/metrics` endpoint（8.2）
+- OpenTelemetry tracing（8.3）
+- 告警通知系统（8.4）
+
+**验收标准（阶段 4 整体）**：
+- [ ] `/health` 返回完整组件状态和资源指标（已实现，保持）
+- [ ] 审计日志按 JSONL 格式输出，至少覆盖 10 种事件类型
+- [ ] Token 脱敏生效（仅前 8 位）
+- [ ] 文件轮转正常工作
+- [ ] 审计日志不阻塞请求热路径（通过 mpsc channel 异步写入）
+- [ ] relay telemetry 周期发布到 MQTT（已实现，保持）
 
 **依赖**
-- 核心服务框架基本成型
+- 核心服务框架基本成型（已满足）
+- Auth/RBAC 模块（已实现，需在现有基础上添加审计埋点）
+- Connection/Stream 模块（需要这些模块稳定后添加审计埋点）
 
 ---
 

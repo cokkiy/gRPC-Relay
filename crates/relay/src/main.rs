@@ -55,6 +55,11 @@ async fn run() -> Result<()> {
 
     let relay_state = std::sync::Arc::new(RelayState::new());
 
+    let audit_logger = relay::audit::AuditLogger::new(
+        &config.observability.audit,
+        config.relay.id.clone(),
+    );
+
     let mqtt_publisher = if config.relay.mqtt.enabled {
         let handles = mqtt::spawn_mqtt_publisher(
             config.relay.mqtt.clone(),
@@ -75,6 +80,7 @@ async fn run() -> Result<()> {
         security_metrics,
         resource_monitor,
         mqtt_publisher,
+        audit_logger,
     );
     let stale_stream_cleanup = grpc_service.spawn_stale_stream_cleanup();
     let grpc_addr = config

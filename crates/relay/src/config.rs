@@ -248,6 +248,8 @@ pub struct ObservabilityConfig {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub health: HealthConfig,
+    #[serde(default)]
+    pub audit: AuditConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -449,5 +451,63 @@ fn default_mqtt_reconnect_initial_seconds() -> u64 {
 }
 
 fn default_mqtt_reconnect_max_seconds() -> u64 {
+    30
+}
+
+// ── Audit config ────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuditConfig {
+    #[serde(default = "default_audit_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_audit_output")]
+    pub output: String,
+    #[serde(default = "default_audit_file_path")]
+    pub file_path: String,
+    #[serde(default = "default_audit_max_size_mb")]
+    pub max_size_mb: u64,
+    #[serde(default = "default_audit_max_backups")]
+    pub max_backups: usize,
+    #[serde(default = "default_audit_retention_days")]
+    pub retention_days: u32,
+    #[serde(default)]
+    pub events: Vec<String>,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_audit_enabled(),
+            output: default_audit_output(),
+            file_path: default_audit_file_path(),
+            max_size_mb: default_audit_max_size_mb(),
+            max_backups: default_audit_max_backups(),
+            retention_days: default_audit_retention_days(),
+            events: Vec::new(),
+        }
+    }
+}
+
+fn default_audit_enabled() -> bool {
+    true
+}
+
+fn default_audit_output() -> String {
+    "stdout".to_string()
+}
+
+fn default_audit_file_path() -> String {
+    "/var/log/relay/audit.log".to_string()
+}
+
+fn default_audit_max_size_mb() -> u64 {
+    100
+}
+
+fn default_audit_max_backups() -> usize {
+    10
+}
+
+fn default_audit_retention_days() -> u32 {
     30
 }
