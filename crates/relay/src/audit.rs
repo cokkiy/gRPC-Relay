@@ -224,7 +224,7 @@ impl FileAuditWriter {
         let cutoff = std::time::SystemTime::now()
             - std::time::Duration::from_secs(self.retention_days as u64 * 24 * 3600);
 
-        for i in 1..=(self.max_backups + 1) {
+        for i in 1..=self.max_backups {
             let backup = self.file_path.with_extension(format!("log.{i}"));
             if !backup.exists() {
                 break;
@@ -232,7 +232,7 @@ impl FileAuditWriter {
             let age = fs::metadata(&backup)
                 .and_then(|m| m.modified())
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            if age <= cutoff {
+            if age < cutoff {
                 if let Err(e) = fs::remove_file(&backup) {
                     tracing::warn!(
                         error = %e,
@@ -245,52 +245,50 @@ impl FileAuditWriter {
     }
 
     fn rotate(&self) -> std::io::Result<()> {
-        // Take the writer lock and flush before renaming to ensure all buffered
-        // data is persisted and no concurrent writes occur during the rename.
-        let mut writer = self.writer.lock().unwrap();
-        writer.flush()?;
+        {
+            // Take the writer lock and flush before renaming to ensure all buffered
+            // data is persisted and no concurrent writes occur during the rename.
+            let mut writer = self.writer.lock().unwrap();
+            writer.flush()?;
 
-        // Rotate old backup files: audit.log.N -> audit.log.(N+1)
-        for i in (1..self.max_backups).rev() {
-            let old = self.file_path.with_extension(format!("log.{i}"));
-            let new = self.file_path.with_extension(format!("log.{}", i + 1));
-            if old.exists() {
-                if let Err(e) = fs::rename(&old, &new) {
-                    tracing::warn!(
-                        error = %e,
-                        from = %old.display(),
-                        to = %new.display(),
-                        "audit log backup rotation failed"
-                    );
+            // Rotate old backup files: audit.log.N -> audit.log.(N+1)
+            for i in (1..self.max_backups).rev() {
+                let old = self.file_path.with_extension(format!("log.{i}"));
+                let new = self.file_path.with_extension(format!("log.{}", i + 1));
+                if old.exists() {
+                    if let Err(e) = fs::rename(&old, &new) {
+                        tracing::warn!(
+                            error = %e,
+                            from = %old.display(),
+                            to = %new.display(),
+                            "audit log backup rotation failed"
+                        );
+                    }
                 }
             }
-        }
 
-        // Rotate current audit.log -> audit.log.1
-        let first_backup = self.file_path.with_extension("log.1");
-        if let Err(e) = fs::rename(&self.file_path, &first_backup) {
-            tracing::error!(
-                error = %e,
-                path = %self.file_path.display(),
-                "failed to rename active audit log for rotation; rotation skipped"
-            );
-            return Err(e);
-        }
+            // Rotate current audit.log -> audit.log.1
+            let first_backup = self.file_path.with_extension("log.1");
+            if let Err(e) = fs::rename(&self.file_path, &first_backup) {
+                tracing::error!(
+                    error = %e,
+                    path = %self.file_path.display(),
+                    "failed to rename active audit log for rotation; rotation skipped"
+                );
+                return Err(e);
+            }
 
-        // Create a fresh audit.log
-        let file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.file_path)?;
+            // Create a fresh audit.log
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.file_path)?;
 
-        *writer = BufWriter::new(file);
-        self.bytes_written.store(0, std::sync::atomic::Ordering::Relaxed);
+            *writer = BufWriter::new(file);
+            self.bytes_written.store(0, std::sync::atomic::Ordering::Relaxed);
+        } // writer lock is released here before retention cleanup
 
-        // Drop the lock before running retention cleanup (avoids holding the
-        // writer lock during potentially slow filesystem operations).
-        drop(writer);
         self.cleanup_old_backups();
-
         Ok(())
     }
 }
