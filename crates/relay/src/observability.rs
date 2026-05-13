@@ -1,15 +1,23 @@
-use axum::{routing::get, Json, Router};
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
+};
 use serde::Serialize;
-use std::{net::SocketAddr, time::Instant};
+use std::{net::SocketAddr, sync::Arc, time::Instant};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use tracing::info;
 
 use tokio::net::TcpListener;
 
+use crate::relay_metrics::RelayMetrics;
 use crate::mqtt::MqttRuntimeState;
 use crate::resource_monitor::ResourceMonitor;
 use crate::security_metrics::{SecurityMetrics, SecurityMetricsSnapshot};
+use crate::state::RelayState;
+use crate::stream::StreamRouter;
 use crate::{config::HealthConfig, AppError, Result};
 
 #[derive(Clone)]
@@ -19,6 +27,10 @@ pub struct HealthState {
     security_metrics: SecurityMetrics,
     resource_monitor: ResourceMonitor,
     mqtt_runtime: MqttRuntimeState,
+    relay_state: Arc<RelayState>,
+    stream_router: StreamRouter,
+    metrics: RelayMetrics,
+    startup_complete: bool,
 }
 
 impl HealthState {
@@ -27,6 +39,10 @@ impl HealthState {
         security_metrics: SecurityMetrics,
         resource_monitor: ResourceMonitor,
         mqtt_runtime: MqttRuntimeState,
+        relay_state: Arc<RelayState>,
+        stream_router: StreamRouter,
+        metrics: RelayMetrics,
+        startup_complete: bool,
     ) -> Self {
         Self {
             started_at: Instant::now(),
@@ -34,6 +50,10 @@ impl HealthState {
             security_metrics,
             resource_monitor,
             mqtt_runtime,
+            relay_state,
+            stream_router,
+            metrics,
+            startup_complete,
         }
     }
 }
@@ -103,12 +123,16 @@ fn derive_overall_status(components: &HealthComponents) -> &'static str {
     }
 }
 
-pub async fn serve_health(
+    pub async fn serve_health(
     config: HealthConfig,
     version: &'static str,
     security_metrics: SecurityMetrics,
     resource_monitor: ResourceMonitor,
     mqtt_runtime: MqttRuntimeState,
+    relay_state: Arc<RelayState>,
+    stream_router: StreamRouter,
+    metrics: RelayMetrics,
+    startup_complete: bool,
 ) -> Result<()> {
     if !config.enabled {
         info!("health server disabled");
@@ -124,9 +148,22 @@ pub async fn serve_health(
                 source,
             })?;
 
-    let state = HealthState::new(version, security_metrics, resource_monitor, mqtt_runtime);
+    let state = HealthState::new(
+        version,
+        security_metrics,
+        resource_monitor,
+        mqtt_runtime,
+        relay_state,
+        stream_router,
+        metrics,
+        startup_complete,
+    );
     let app = Router::new()
         .route(&config.path, get(health))
+        .route("/health/live", get(live))
+        .route("/health/ready", get(ready))
+        .route("/health/startup", get(startup))
+        .route("/metrics", get(metrics_handler))
         .route("/metrics/security", get(security_metrics_handler))
         .with_state(state);
 
@@ -148,6 +185,58 @@ pub async fn serve_health(
 async fn health(
     axum::extract::State(state): axum::extract::State<HealthState>,
 ) -> Json<HealthResponse> {
+    Json(build_health_response(&state))
+}
+
+async fn live() -> impl IntoResponse {
+    StatusCode::OK
+}
+
+async fn ready(
+    axum::extract::State(state): axum::extract::State<HealthState>,
+) -> Response {
+    let response = build_health_response(&state);
+    if response.status == "unhealthy" {
+        (StatusCode::SERVICE_UNAVAILABLE, Json(response)).into_response()
+    } else {
+        (StatusCode::OK, Json(response)).into_response()
+    }
+}
+
+async fn startup(
+    axum::extract::State(state): axum::extract::State<HealthState>,
+) -> Response {
+    if state.startup_complete {
+        (StatusCode::OK, Json(build_health_response(&state))).into_response()
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(build_health_response(&state)),
+        )
+            .into_response()
+    }
+}
+
+async fn metrics_handler(
+    axum::extract::State(state): axum::extract::State<HealthState>,
+) -> Response {
+    refresh_runtime_metrics(&state);
+    match state.metrics.encode() {
+        Ok(encoded) => (
+            StatusCode::OK,
+            [("content-type", "text/plain; version=0.0.4")],
+            encoded,
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": err.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
+fn build_health_response(state: &HealthState) -> HealthResponse {
     let timestamp = OffsetDateTime::now_utc()
         .format(&Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
@@ -176,7 +265,7 @@ async fn health(
         },
         quic_listener: ComponentHealth {
             status: "degraded",
-            message: "QUIC listener not implemented",
+            message: "QUIC listener runtime is not active in this crate",
         },
         mqtt_client,
         auth_service: ComponentHealth {
@@ -196,15 +285,16 @@ async fn health(
         version: state.version,
         components,
         metrics: HealthMetrics {
-            active_device_connections: 0,
-            active_controller_connections: 0,
-            active_streams: 0,
+            active_device_connections: state.relay_state.sessions_by_device_id.len() as u64,
+            active_controller_connections: state.relay_state.controller_connection_count(),
+            active_streams: state.stream_router.total_active_streams() as u64,
             cpu_usage_percent: state.resource_monitor.cpu_usage_percent(),
             memory_usage_percent: state.resource_monitor.memory_usage_percent(),
         },
     };
 
-    Json(response)
+    refresh_runtime_metrics_with_response(state, &response);
+    response
 }
 
 async fn security_metrics_handler(
@@ -213,13 +303,88 @@ async fn security_metrics_handler(
     Json(state.security_metrics.snapshot())
 }
 
+fn refresh_runtime_metrics(state: &HealthState) {
+    let _response = build_health_response(state);
+}
+
+fn refresh_runtime_metrics_with_response(state: &HealthState, response: &HealthResponse) {
+    state
+        .metrics
+        .active_device_connections
+        .set(response.metrics.active_device_connections as i64);
+    state
+        .metrics
+        .active_controller_connections
+        .set(response.metrics.active_controller_connections as i64);
+    state
+        .metrics
+        .active_streams
+        .set(response.metrics.active_streams as i64);
+    state
+        .metrics
+        .cpu_usage_percent
+        .set(response.metrics.cpu_usage_percent);
+    state
+        .metrics
+        .memory_usage_percent
+        .set(response.metrics.memory_usage_percent);
+    state.metrics.memory_used_bytes.set(
+        (state.resource_monitor.used_memory_mb() * 1024 * 1024) as f64,
+    );
+    state
+        .metrics
+        .mqtt_connected
+        .set(if state.mqtt_runtime.is_connected() { 1 } else { 0 });
+    state
+        .metrics
+        .mqtt_reconnect_count
+        .set(state.mqtt_runtime.reconnect_count() as i64);
+    state
+        .metrics
+        .mqtt_dropped_count
+        .set(state.mqtt_runtime.dropped_total() as i64);
+    state
+        .metrics
+        .mqtt_queue_pending
+        .set(state.mqtt_runtime.queue_pending() as i64);
+    state.metrics.health_status.set(match response.status {
+        "healthy" => 2,
+        "degraded" => 1,
+        _ => 0,
+    });
+    set_component_metric(&state.metrics, "grpc_server", response.components.grpc_server.status);
+    set_component_metric(&state.metrics, "quic_listener", response.components.quic_listener.status);
+    set_component_metric(&state.metrics, "mqtt_client", response.components.mqtt_client.status);
+    set_component_metric(&state.metrics, "auth_service", response.components.auth_service.status);
+    set_component_metric(
+        &state.metrics,
+        "metrics_collector",
+        response.components.metrics_collector.status,
+    );
+}
+
+fn set_component_metric(metrics: &RelayMetrics, component: &str, status: &str) {
+    metrics
+        .component_health
+        .with_label_values(&[component])
+        .set(match status {
+            "healthy" => 2.0,
+            "degraded" => 1.0,
+            _ => 0.0,
+        });
+}
+
 #[cfg(test)]
 mod tests {
     use super::{derive_overall_status, health, ComponentHealth, HealthComponents, HealthState};
     use crate::mqtt::MqttRuntimeState;
+    use crate::relay_metrics::RelayMetrics;
     use crate::resource_monitor::ResourceMonitor;
     use crate::security_metrics::SecurityMetrics;
+    use crate::state::RelayState;
+    use crate::stream::StreamRouter;
     use axum::{extract::State, Json};
+    use std::sync::Arc;
 
     fn component(status: &'static str) -> ComponentHealth {
         ComponentHealth {
@@ -271,27 +436,42 @@ mod tests {
 
     #[tokio::test]
     async fn health_reports_mqtt_disabled_as_healthy_component() {
+        let relay_state = Arc::new(RelayState::new());
+        let stream_router = StreamRouter::new(&crate::config::StreamConfig::default());
+        let metrics = RelayMetrics::new().unwrap();
         let state = HealthState::new(
             "test",
             SecurityMetrics::default(),
             ResourceMonitor::new(&crate::config::RateLimitConfig::default()),
             MqttRuntimeState::new(false),
+            relay_state,
+            stream_router,
+            metrics,
+            true,
         );
 
         let Json(response) = health(State(state)).await;
         let value = serde_json::to_value(response).unwrap();
 
         assert_eq!(value["components"]["mqtt_client"]["status"], "healthy");
+        // Overall status is "degraded" because the QUIC listener is not active.
         assert_eq!(value["status"], "degraded");
     }
 
     #[tokio::test]
     async fn health_reports_mqtt_disconnected_as_degraded_component() {
+        let relay_state = Arc::new(RelayState::new());
+        let stream_router = StreamRouter::new(&crate::config::StreamConfig::default());
+        let metrics = RelayMetrics::new().unwrap();
         let state = HealthState::new(
             "test",
             SecurityMetrics::default(),
             ResourceMonitor::new(&crate::config::RateLimitConfig::default()),
             MqttRuntimeState::new(true),
+            relay_state,
+            stream_router,
+            metrics,
+            true,
         );
 
         let Json(response) = health(State(state)).await;

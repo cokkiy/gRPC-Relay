@@ -11,6 +11,7 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 config = { workspace = true }
@@ -19,6 +20,10 @@ axum = { workspace = true, features = ["tokio"] }
 hyper = { workspace = true }
 time = { workspace = true }
 jsonwebtoken = { workspace = true }
+prometheus = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+opentelemetry-otlp = { workspace = true }
 rumqttc = "0.24"
 
 # gRPC server + streaming
@@ -35,3 +40,6 @@ dashmap = "6"
 sysinfo = "0.31"
 
 relay-proto = { path = "../relay-proto" }
+
+[dev-dependencies]
+tempfile = "3"

@@ -40,6 +40,12 @@ pub enum AppError {
     #[error("health server task failed: {0}")]
     HealthTask(#[source] tokio::task::JoinError),
 
+    #[error("audit init failed: {0}")]
+    AuditInit(String),
+
+    #[error("audit write failed: {0}")]
+    AuditWrite(#[source] std::io::Error),
+
     #[error("gRPC server failed: {0}")]
     GrpcServer(#[from] tonic::transport::Error),
 
