@@ -10,13 +10,15 @@ pub mod logging;
 pub mod mqtt;
 pub mod observability;
 pub mod rate_limiter;
-pub mod relay_metrics;
 pub mod rbac;
+pub mod relay_metrics;
 pub mod resource_monitor;
 pub mod security_metrics;
 pub mod session;
 pub mod state;
 pub mod stream;
+#[cfg(test)]
+pub mod test_helpers;
 pub mod transport;
 pub mod validator;
 pub use error::{AppError, Result};
