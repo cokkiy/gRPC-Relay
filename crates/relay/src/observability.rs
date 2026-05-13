@@ -304,8 +304,7 @@ async fn security_metrics_handler(
 }
 
 fn refresh_runtime_metrics(state: &HealthState) {
-    let response = build_health_response(state);
-    refresh_runtime_metrics_with_response(state, &response);
+    let _response = build_health_response(state);
 }
 
 fn refresh_runtime_metrics_with_response(state: &HealthState, response: &HealthResponse) {
