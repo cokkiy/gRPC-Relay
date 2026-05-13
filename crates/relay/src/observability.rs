@@ -264,8 +264,8 @@ fn build_health_response(state: &HealthState) -> HealthResponse {
             message: "gRPC server running",
         },
         quic_listener: ComponentHealth {
-            status: "healthy",
-            message: "QUIC listener configured",
+            status: "degraded",
+            message: "QUIC listener runtime is not active in this crate",
         },
         mqtt_client,
         auth_service: ComponentHealth {
