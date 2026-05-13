@@ -7,7 +7,6 @@ use std::sync::Arc;
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 use tokio::sync::mpsc;
-use tracing;
 
 // ── Audit event types ───────────────────────────────────────────────────────
 
