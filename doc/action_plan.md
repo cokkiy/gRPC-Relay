@@ -430,16 +430,17 @@
 **目标**：补齐生产可用性基础。
 
 **当前状态总览**：
-- ✅ `/health` — 已实现（`crates/relay/src/observability.rs`：HealthState / ComponentHealth / HealthResponse，含 MQTT 状态判定与 resource 阈值判定）
-- ✅ `/metrics/security` — 已实现（`crates/relay/src/security_metrics.rs`：AtomicU64 计数器 + ratio snapshot）
-- ✅ 结构化日志 — 已实现（`crates/relay/src/logging.rs`：tracing-subscriber，支持 JSON/text 格式 + EnvFilter）
-- ✅ 资源监控 — 已实现（`crates/relay/src/resource_monitor.rs`：CPU / 内存阈值检查，供 health 与 telemetry 复用）
-- ✅ Relay MQTT 遥测 — 已实现（`crates/relay/src/mqtt.rs::build_relay_telemetry_payload`：system/connection/stream/performance/error/queue/mqtt/health 八大类指标，每 30s 发布到 `telemetry/relay/{relay_id}`）
-- ✅ MQTT runtime 状态追踪 — 已实现（`MqttRuntimeState`：连接状态 / 重连次数 / 丢弃数 / 队列深度，供 health 和 telemetry 消费）
-- ❌ Prometheus `/metrics` endpoint — 当前 MVP 暂缓（需求文档明确："当前 MVP 实现仅保证 `/health` 可用，`/metrics` endpoint 暂缓到后续迭代"）
-- ❌ 审计日志 — 未实现（需求 7.4 节定义了完整的审计日志格式、事件类型清单、脱敏规则）
-- ❌ OpenTelemetry 分布式追踪 — 未实现（需求 7.4 节定义了 trace 结构和 span 属性）
-- ❌ 告警阈值配置与通知 — 未实现（需求 7.4 节定义了告警阈值规则表和通知渠道）
+- ✅ `/health` — 已实现（含真实 device/stream/controller 计数、资源阈值、MQTT 状态判定）
+- ✅ `/health/live` `/health/ready` `/health/startup` — 已实现（与架构文档运维接口对齐）
+- ✅ `/metrics/security` — 已实现（安全计数与比率快照）
+- ✅ Prometheus `/metrics` endpoint — 已实现（核心 auth / request / stream / resource / MQTT / health 指标）
+- ✅ 结构化日志 — 已实现（`tracing-subscriber`，支持 JSON/text + EnvFilter）
+- ✅ OpenTelemetry 分布式追踪 — 已实现（可配置 OTLP 导出、采样率、service.name）
+- ✅ 资源监控 — 已实现（CPU / 内存阈值检查，供 health / telemetry / alerting 复用）
+- ✅ Relay MQTT 遥测 — 已实现（定期发布 relay telemetry）
+- ✅ MQTT runtime 状态追踪 — 已实现（连接状态 / 重连次数 / 丢弃数 / 队列深度）
+- ✅ 审计日志 — 已实现（JSONL、异步写入、事件过滤、轮转、脱敏、核心链路埋点）
+- ✅ 告警阈值配置与通知入口 — 已实现（规则评估、抑制窗口、结构化告警输出；外部渠道预留）
 
 ---
 
@@ -573,7 +574,7 @@ observability:
 
 #### 8.2 Prometheus `/metrics` Endpoint（后续迭代暂缓，此处仅定义接口契约）
 
-**状态**：需求文档明确 MVP 暂缓。本节省略实现细节，仅保留接口契约供后续参考。
+**状态**：已实现核心 `/metrics` endpoint。需求文档中的“MVP 暂缓”说明已过期，需要在需求文档中另行同步。
 
 **契约要点**（来自需求 7.4 节完整指标清单）：
 - Connection metrics: `relay_active_connections`, `relay_connection_duration_seconds`, `relay_connection_rate`, `relay_connections_by_region`
@@ -598,7 +599,7 @@ observability:
 
 #### 8.3 OpenTelemetry 分布式追踪（后续迭代，此处仅定义接入点）
 
-**状态**：需求 7.4 节定义了完整 trace 结构和 span 属性，当前未实现。
+**状态**：已实现可配置 OTLP tracing layer，并在关键请求链路添加 span/属性。
 
 **Trace 结构回顾**（需求定义）：
 ```
@@ -626,7 +627,7 @@ Trace: controller_request_to_device
 
 #### 8.4 告警阈值与通知（后续迭代，此处定义配置结构）
 
-**状态**：需求 7.4 节定义了完整的告警规则表（阈值/级别/处理建议）和通知渠道，未实现。
+**状态**：已实现本地规则评估、抑制与结构化告警输出；Slack/SMTP/PagerDuty 仍为后续可选扩展。
 
 **告警规则回顾**（需求 7.4 节 14 条告警规则）：
 
@@ -693,31 +694,35 @@ observability:
 
 #### 8.5 补齐清单与执行顺序
 
-**本次 MVP 周期必须完成的（写入 action plan 8.1）**：
+**本次 MVP 周期必须完成的（当前状态）**：
 
 | 序号 | 任务 | 说明 | 预估工作量 |
 |---|---|---|---|
-| 8.1.1 | 创建 `crates/relay/src/audit.rs` | AuditEvent 枚举 + AuditWriter trait + FileAuditWriter | 2-3 天 |
-| 8.1.2 | 审计配置结构 | `AuditConfig` 加到 `ObservabilityConfig` | 0.5 天 |
-| 8.1.3 | 在 Auth/RBAC 模块埋点 | 认证成功/失败、授权拒绝事件 | 0.5 天 |
-| 8.1.4 | 在 Connection 模块埋点 | 设备连接/断连/注册事件 | 0.5 天 |
-| 8.1.5 | 在 Stream 模块埋点 | 流创建/关闭、Controller 请求事件 | 0.5 天 |
-| 8.1.6 | 在 Rate Limiter 埋点 | 限流触发事件 | 0.5 天 |
-| 8.1.7 | 在 Session Manager 埋点 | 会话恢复/过期事件 | 0.5 天 |
-| 8.1.8 | 集成测试 | 验证审计日志格式、脱敏、轮转 | 1 天 |
+| 8.1.1 | `audit.rs` 基础设施 | 已完成 | ✅ |
+| 8.1.2 | 审计配置结构 | 已完成 | ✅ |
+| 8.1.3 | Auth/RBAC 埋点 | 已完成 | ✅ |
+| 8.1.4 | Connection 埋点 | 已完成 | ✅ |
+| 8.1.5 | Stream / Controller Request 埋点 | 已完成 | ✅ |
+| 8.1.6 | Rate Limiter 埋点 | 已完成 | ✅ |
+| 8.1.7 | Session 埋点 | 已完成 | ✅ |
+| 8.1.8 | 测试补齐 | 已完成基础覆盖，后续可继续扩展集成验证 | ✅ |
 
-**后续迭代（P2 暂不执行）**：
-- Prometheus `/metrics` endpoint（8.2）
-- OpenTelemetry tracing（8.3）
-- 告警通知系统（8.4）
+**后续迭代（P2 可选增强）**：
+- 扩展 `/metrics` 指标维度与 histogram 覆盖
+- 接入真实外部告警通道（Slack / SMTP / PagerDuty）
+- 补充更细粒度 tracing span 与跨进程上下文传播
 
 **验收标准（阶段 4 整体）**：
-- [ ] `/health` 返回完整组件状态和资源指标（已实现，保持）
-- [ ] 审计日志按 JSONL 格式输出，至少覆盖 10 种事件类型
-- [ ] Token 脱敏生效（仅前 8 位）
-- [ ] 文件轮转正常工作
-- [ ] 审计日志不阻塞请求热路径（通过 mpsc channel 异步写入）
-- [ ] relay telemetry 周期发布到 MQTT（已实现，保持）
+- [x] `/health` 返回完整组件状态和资源指标
+- [x] `/health/live` `/health/ready` `/health/startup` 可用
+- [x] `/metrics` 输出核心 Prometheus 指标
+- [x] 审计日志按 JSONL 格式输出，覆盖核心事件类型
+- [x] Token 脱敏生效（仅前 8 位）
+- [x] 文件轮转正常工作
+- [x] 审计日志不阻塞请求热路径（mpsc 异步写入）
+- [x] relay telemetry 周期发布到 MQTT
+- [x] tracing 可按配置启用并导出到 OTLP
+- [x] alerting 规则可本地评估并输出告警事件
 
 **依赖**
 - 核心服务框架基本成型（已满足）

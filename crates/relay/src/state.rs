@@ -61,6 +61,7 @@ pub struct RelayState {
     pub connection_to_device_id: DashMap<String, String>,
     pub inflight_by_sequence: DashMap<(String, i64), std::sync::Arc<InFlight>>,
     connection_id_counter: AtomicU64,
+    controller_connection_count: AtomicU64,
 }
 
 impl Default for RelayState {
@@ -76,6 +77,7 @@ impl RelayState {
             connection_to_device_id: DashMap::new(),
             inflight_by_sequence: DashMap::new(),
             connection_id_counter: AtomicU64::new(1),
+            controller_connection_count: AtomicU64::new(0),
         }
     }
 
@@ -173,6 +175,23 @@ impl RelayState {
                     .map(|inflight| (seq, inflight))
             })
             .collect()
+    }
+
+    pub fn increment_controller_connections(&self) {
+        self.controller_connection_count
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn decrement_controller_connections(&self) {
+        self.controller_connection_count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                Some(value.saturating_sub(1))
+            })
+            .ok();
+    }
+
+    pub fn controller_connection_count(&self) -> u64 {
+        self.controller_connection_count.load(Ordering::Relaxed)
     }
 }
 

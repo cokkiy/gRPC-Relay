@@ -1,3 +1,4 @@
+pub mod alerting;
 pub mod api;
 pub mod audit;
 pub mod auth;
@@ -9,6 +10,7 @@ pub mod logging;
 pub mod mqtt;
 pub mod observability;
 pub mod rate_limiter;
+pub mod relay_metrics;
 pub mod rbac;
 pub mod resource_monitor;
 pub mod security_metrics;

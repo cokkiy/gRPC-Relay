@@ -2,6 +2,8 @@ use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use crate::relay_metrics::RelayMetrics;
+
 #[derive(Debug, Clone, Default)]
 pub struct SecurityMetrics {
     inner: Arc<SecurityMetricsInner>,
@@ -14,6 +16,7 @@ struct SecurityMetricsInner {
     authorization_denied_total: AtomicU64,
     rate_limit_total: AtomicU64,
     revoked_tokens_total: AtomicU64,
+    relay_metrics: std::sync::Mutex<Option<RelayMetrics>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -29,32 +32,52 @@ pub struct SecurityMetricsSnapshot {
 }
 
 impl SecurityMetrics {
+    pub fn attach_relay_metrics(&self, relay_metrics: RelayMetrics) {
+        let mut guard = self.inner.relay_metrics.lock().unwrap();
+        *guard = Some(relay_metrics);
+    }
+
     pub fn record_auth_success(&self) {
         self.inner
             .auth_success_total
             .fetch_add(1, Ordering::Relaxed);
+        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+            metrics.auth_success_total.inc();
+        }
     }
 
     pub fn record_auth_failure(&self) {
         self.inner
             .auth_failure_total
             .fetch_add(1, Ordering::Relaxed);
+        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+            metrics.auth_failure_total.inc();
+        }
     }
 
     pub fn record_authorization_denied(&self) {
         self.inner
             .authorization_denied_total
             .fetch_add(1, Ordering::Relaxed);
+        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+            metrics.authorization_denied_total.inc();
+        }
     }
 
     pub fn record_rate_limit(&self) {
         self.inner.rate_limit_total.fetch_add(1, Ordering::Relaxed);
+        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+            metrics.rate_limit_hits_total.inc();
+        }
     }
 
     pub fn record_revoked_token(&self) {
         self.inner
             .revoked_tokens_total
             .fetch_add(1, Ordering::Relaxed);
+        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+            metrics.revoked_tokens_total.inc();
+        }
     }
 
     pub fn snapshot(&self) -> SecurityMetricsSnapshot {

@@ -58,7 +58,40 @@ observability:
   logging:
     level: info
     format: json
+  tracing:
+    enabled: false
+    sampling_rate: 0.1
+    exporter: otlp
+    otlp_endpoint: "http://localhost:4317"
+    service_name: "grpc-relay"
   health:
     enabled: true
     address: 0.0.0.0:8080
     path: /health
+  audit:
+    enabled: true
+    output: stdout
+    file_path: /var/log/relay/audit.log
+    max_size_mb: 100
+    max_backups: 10
+    retention_days: 30
+  alerting:
+    enabled: false
+    evaluation_interval_seconds: 30
+    channels:
+      - type: log
+        severity: warning,critical
+    rules:
+      - name: high_cpu_usage
+        condition: cpu_usage_percent > 80
+        severity: warning
+        message: "CPU usage exceeded 80%"
+      - name: high_memory_usage
+        condition: memory_usage_percent > 85
+        severity: warning
+        message: "Memory usage exceeded 85%"
+      - name: mqtt_disconnected
+        condition: mqtt_connected == false
+        severity: critical
+        duration_seconds: 60
+        message: "MQTT disconnected"

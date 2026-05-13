@@ -250,6 +250,10 @@ pub struct ObservabilityConfig {
     pub health: HealthConfig,
     #[serde(default)]
     pub audit: AuditConfig,
+    #[serde(default)]
+    pub tracing: TracingConfig,
+    #[serde(default)]
+    pub alerting: AlertingConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -258,6 +262,20 @@ pub struct LoggingConfig {
     pub level: String,
     #[serde(default = "default_log_format")]
     pub format: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TracingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_tracing_sampling_rate")]
+    pub sampling_rate: f64,
+    #[serde(default = "default_tracing_exporter")]
+    pub exporter: String,
+    #[serde(default)]
+    pub otlp_endpoint: Option<String>,
+    #[serde(default = "default_tracing_service_name")]
+    pub service_name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -270,11 +288,87 @@ pub struct HealthConfig {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlertingConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_alerting_evaluation_interval_seconds")]
+    pub evaluation_interval_seconds: u64,
+    #[serde(default)]
+    pub channels: Vec<AlertChannelConfig>,
+    #[serde(default)]
+    pub rules: Vec<AlertRuleConfig>,
+    #[serde(default)]
+    pub suppression: AlertSuppressionConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlertChannelConfig {
+    #[serde(rename = "type")]
+    pub channel_type: String,
+    #[serde(default)]
+    pub webhook_url_file: Option<String>,
+    #[serde(default)]
+    pub smtp_server: Option<String>,
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
+    pub severity: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlertRuleConfig {
+    pub name: String,
+    pub condition: String,
+    pub severity: AlertingSeverity,
+    pub message: String,
+    #[serde(default)]
+    pub duration_seconds: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AlertingSeverity {
+    Warning,
+    Critical,
+}
+
+impl AlertingSeverity {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Warning => "warning",
+            Self::Critical => "critical",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AlertSuppressionConfig {
+    #[serde(default = "default_alert_suppression_min_interval_seconds")]
+    pub min_interval_seconds: u64,
+    #[serde(default)]
+    pub maintenance_windows: Vec<String>,
+}
+
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             level: default_log_level(),
             format: default_log_format(),
+        }
+    }
+}
+
+impl Default for TracingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sampling_rate: default_tracing_sampling_rate(),
+            exporter: default_tracing_exporter(),
+            otlp_endpoint: None,
+            service_name: default_tracing_service_name(),
         }
     }
 }
@@ -285,6 +379,27 @@ impl Default for HealthConfig {
             enabled: default_health_enabled(),
             address: default_health_address(),
             path: default_health_path(),
+        }
+    }
+}
+
+impl Default for AlertingConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            evaluation_interval_seconds: default_alerting_evaluation_interval_seconds(),
+            channels: Vec::new(),
+            rules: default_alert_rules(),
+            suppression: AlertSuppressionConfig::default(),
+        }
+    }
+}
+
+impl Default for AlertSuppressionConfig {
+    fn default() -> Self {
+        Self {
+            min_interval_seconds: default_alert_suppression_min_interval_seconds(),
+            maintenance_windows: Vec::new(),
         }
     }
 }
@@ -354,6 +469,18 @@ fn default_log_format() -> String {
     "json".to_string()
 }
 
+fn default_tracing_sampling_rate() -> f64 {
+    0.1
+}
+
+fn default_tracing_exporter() -> String {
+    "otlp".to_string()
+}
+
+fn default_tracing_service_name() -> String {
+    "grpc-relay".to_string()
+}
+
 fn default_health_enabled() -> bool {
     true
 }
@@ -364,6 +491,14 @@ fn default_health_address() -> String {
 
 fn default_health_path() -> String {
     "/health".to_string()
+}
+
+fn default_alerting_evaluation_interval_seconds() -> u64 {
+    30
+}
+
+fn default_alert_suppression_min_interval_seconds() -> u64 {
+    300
 }
 
 fn default_stream_idle_timeout() -> u64 {
@@ -510,4 +645,37 @@ fn default_audit_max_backups() -> usize {
 
 fn default_audit_retention_days() -> u32 {
     30
+}
+
+fn default_alert_rules() -> Vec<AlertRuleConfig> {
+    vec![
+        AlertRuleConfig {
+            name: "high_cpu_usage".to_string(),
+            condition: "cpu_usage_percent > 80".to_string(),
+            severity: AlertingSeverity::Warning,
+            message: "CPU usage exceeded 80%".to_string(),
+            duration_seconds: None,
+        },
+        AlertRuleConfig {
+            name: "high_memory_usage".to_string(),
+            condition: "memory_usage_percent > 85".to_string(),
+            severity: AlertingSeverity::Warning,
+            message: "Memory usage exceeded 85%".to_string(),
+            duration_seconds: None,
+        },
+        AlertRuleConfig {
+            name: "mqtt_disconnected".to_string(),
+            condition: "mqtt_connected == false".to_string(),
+            severity: AlertingSeverity::Critical,
+            message: "MQTT disconnected".to_string(),
+            duration_seconds: Some(60),
+        },
+        AlertRuleConfig {
+            name: "high_active_connections".to_string(),
+            condition: "active_device_connections > 9000".to_string(),
+            severity: AlertingSeverity::Warning,
+            message: "Active device connections exceeded 9000".to_string(),
+            duration_seconds: None,
+        },
+    ]
 }

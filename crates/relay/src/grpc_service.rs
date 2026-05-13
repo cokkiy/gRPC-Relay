@@ -4,6 +4,7 @@ use crate::config::AppConfig;
 use crate::idempotency::IdempotencyCache;
 use crate::mqtt::MqttPublisher;
 use crate::rate_limiter::{BandwidthTracker, ConnectionRateLimiter, RateLimiter};
+use crate::relay_metrics::RelayMetrics;
 use crate::rbac::{AuthorizationError, RbacPolicyEngine};
 use crate::resource_monitor::ResourceMonitor;
 use crate::security_metrics::SecurityMetrics;
@@ -47,6 +48,7 @@ pub struct RelayGrpcService {
     resource_monitor: ResourceMonitor,
     mqtt_publisher: Option<MqttPublisher>,
     audit_logger: Option<std::sync::Arc<AuditLogger>>,
+    relay_metrics: RelayMetrics,
 }
 
 impl RelayGrpcService {
@@ -57,6 +59,7 @@ impl RelayGrpcService {
         resource_monitor: ResourceMonitor,
         mqtt_publisher: Option<MqttPublisher>,
         audit_logger: Option<std::sync::Arc<AuditLogger>>,
+        relay_metrics: RelayMetrics,
     ) -> Self {
         let auth_service = AuthService::new(&config.relay.auth);
         let rbac = RbacPolicyEngine::new(&config.relay.auth);
@@ -80,6 +83,7 @@ impl RelayGrpcService {
             resource_monitor,
             mqtt_publisher,
             audit_logger,
+            relay_metrics,
         }
     }
 
@@ -466,6 +470,7 @@ impl RelayGrpcService {
         rbac: RbacPolicyEngine,
         security_metrics: SecurityMetrics,
         audit_logger: Option<std::sync::Arc<AuditLogger>>,
+        relay_metrics: RelayMetrics,
         mut inbound: S,
         out_tx: mpsc::Sender<Result<DeviceResponse, Status>>,
     ) where
@@ -473,9 +478,14 @@ impl RelayGrpcService {
     {
         let mut stream_id: Option<String> = None;
         let mut stream_binding: Option<(String, String, String)> = None;
+        let mut controller_connected = false;
+        let controller_stream_started_at = std::time::Instant::now();
 
         while let Some(next_message) = inbound.next().await {
             let Ok(msg) = next_message else {
+                if let Some(ref audit) = audit_logger {
+                    audit.error("controller stream receive error", "STREAM_RECV", None);
+                }
                 break;
             };
             let device_id = &msg.target_device_id;
@@ -536,12 +546,19 @@ impl RelayGrpcService {
                             token_prefix = %AuthService::token_prefix(&msg.token),
                             reason = "controller_token_ok"
                         );
-                        if let Some(ref audit) = audit_logger {
-                            audit.auth_success("controller", &msg.controller_id, "");
+                    if let Some(ref audit) = audit_logger {
+                        audit.auth_success("controller", &msg.controller_id, "");
+                        if !controller_connected {
+                            audit.controller_connect(&msg.controller_id, "", None);
                         }
-                        p
                     }
-                    Err(_) => {
+                    if !controller_connected {
+                        state.increment_controller_connections();
+                        controller_connected = true;
+                    }
+                    p
+                }
+                Err(_) => {
                         security_metrics.record_auth_failure();
                         tracing::info!(
                             event = "auth_failure",
@@ -598,6 +615,10 @@ impl RelayGrpcService {
                             "",
                         );
                     }
+                    relay_metrics
+                        .requests_total
+                        .with_label_values(&[&msg.method_name, "unauthorized"])
+                        .inc();
                     send_error_response(&out_tx, device_id, seq, ErrorCode::Unauthorized).await;
                     continue;
                 }
@@ -631,6 +652,10 @@ impl RelayGrpcService {
                             "",
                         );
                     }
+                    relay_metrics
+                        .requests_total
+                        .with_label_values(&[&msg.method_name, "rate_limited"])
+                        .inc();
                     send_error_response(&out_tx, device_id, seq, ErrorCode::RateLimited).await;
                     continue;
                 }
@@ -651,6 +676,9 @@ impl RelayGrpcService {
                                 "",
                             );
                         }
+                        relay_metrics
+                            .active_streams
+                            .set(router.total_active_streams() as i64);
                         stream_binding = Some((
                             msg.target_device_id.clone(),
                             msg.controller_id.clone(),
@@ -659,10 +687,29 @@ impl RelayGrpcService {
                         stream_id = Some(sid);
                     }
                     Err(e) if e.kind == StreamRouterErrorKind::MaxStreamsExceeded => {
+                        relay_metrics
+                            .requests_total
+                            .with_label_values(&[&msg.method_name, "rate_limited"])
+                            .inc();
                         send_error_response(&out_tx, device_id, seq, ErrorCode::RateLimited).await;
                         continue;
                     }
                     Err(_) => {
+                        if let Some(ref audit) = audit_logger {
+                            audit.error(
+                                "stream mapping creation failed",
+                                "STREAM_MAPPING_CREATE",
+                                Some(serde_json::json!({
+                                    "controller_id": msg.controller_id,
+                                    "device_id": msg.target_device_id,
+                                    "method_name": msg.method_name,
+                                })),
+                            );
+                        }
+                        relay_metrics
+                            .requests_total
+                            .with_label_values(&[&msg.method_name, "internal_error"])
+                            .inc();
                         send_error_response(&out_tx, device_id, seq, ErrorCode::InternalError)
                             .await;
                         continue;
@@ -687,6 +734,10 @@ impl RelayGrpcService {
                 if let Some(ref sid) = stream_id {
                     router.finish_request(sid);
                 }
+                relay_metrics
+                    .requests_total
+                    .with_label_values(&[&msg.method_name, "cached"])
+                    .inc();
                 let _ = out_tx.send(Ok(cached)).await;
                 continue;
             }
@@ -750,6 +801,10 @@ impl RelayGrpcService {
                             "",
                         );
                     }
+                    relay_metrics
+                        .requests_total
+                        .with_label_values(&[&msg.method_name, "rate_limited"])
+                        .inc();
                     send_error_response(&out_tx, device_id, seq, ErrorCode::RateLimited).await;
                     if let Some(ref sid) = stream_id {
                         router.finish_request(sid);
@@ -773,6 +828,18 @@ impl RelayGrpcService {
                     .await
                     .is_err()
                 {
+                    if let Some(ref audit) = audit_logger {
+                        audit.error(
+                            "failed to forward request to device",
+                            "DEVICE_FORWARD_FAILED",
+                            Some(serde_json::json!({
+                                "device_id": device_id,
+                                "controller_id": msg.controller_id,
+                                "method_name": msg.method_name,
+                                "sequence_number": msg.sequence_number,
+                            })),
+                        );
+                    }
                     if let Some(inflight) = state.take_inflight(device_id, msg.sequence_number) {
                         inflight
                             .complete(error_resp(device_id, seq, ErrorCode::DeviceOffline))
@@ -785,6 +852,7 @@ impl RelayGrpcService {
                 }
             }
 
+            let request_started_at = std::time::Instant::now();
             if let Ok(resp) = rx.await {
                 if is_new_forwarder {
                     cache
@@ -804,10 +872,78 @@ impl RelayGrpcService {
                 if let Some(ref sid) = stream_id {
                     router.finish_request(sid);
                 }
+                let latency = request_started_at.elapsed().as_secs_f64();
+                relay_metrics
+                    .request_latency_seconds
+                    .with_label_values(&[&msg.method_name, "success"])
+                    .observe(latency);
+                relay_metrics
+                    .requests_total
+                    .with_label_values(&[&msg.method_name, "success"])
+                    .inc();
+                relay_metrics
+                    .bytes_transferred_total
+                    .with_label_values(&["tx"])
+                    .inc_by(msg.encrypted_payload.len() as u64);
+                relay_metrics
+                    .bytes_transferred_total
+                    .with_label_values(&["rx"])
+                    .inc_by(resp.encrypted_payload.len() as u64);
+                if let Some(ref audit) = audit_logger {
+                    audit.controller_request(
+                        &msg.controller_id,
+                        &msg.target_device_id,
+                        "",
+                        &msg.method_name,
+                        msg.sequence_number,
+                        "success",
+                        None,
+                        Some(latency * 1000.0),
+                        Some(resp.encrypted_payload.len() as u64),
+                        "",
+                        None,
+                        None,
+                    );
+                }
                 let _ = out_tx.send(Ok(resp)).await;
             } else {
                 if let Some(ref sid) = stream_id {
                     router.finish_request(sid);
+                }
+                let latency = request_started_at.elapsed().as_secs_f64();
+                relay_metrics
+                    .request_latency_seconds
+                    .with_label_values(&[&msg.method_name, "internal_error"])
+                    .observe(latency);
+                relay_metrics
+                    .requests_total
+                    .with_label_values(&[&msg.method_name, "internal_error"])
+                    .inc();
+                if let Some(ref audit) = audit_logger {
+                    audit.controller_request(
+                        &msg.controller_id,
+                        &msg.target_device_id,
+                        "",
+                        &msg.method_name,
+                        msg.sequence_number,
+                        "failure",
+                        Some("INTERNAL_ERROR"),
+                        Some(latency * 1000.0),
+                        None,
+                        "",
+                        None,
+                        None,
+                    );
+                    audit.error(
+                        "controller request completion channel closed",
+                        "REQUEST_WAIT_FAILED",
+                        Some(serde_json::json!({
+                            "controller_id": msg.controller_id,
+                            "device_id": msg.target_device_id,
+                            "method_name": msg.method_name,
+                            "sequence_number": msg.sequence_number,
+                        })),
+                    );
                 }
                 send_error_response(&out_tx, device_id, seq, ErrorCode::InternalError).await;
             }
@@ -820,6 +956,22 @@ impl RelayGrpcService {
                 }
             }
             router.remove_mapping(sid);
+            relay_metrics
+                .active_streams
+                .set(router.total_active_streams() as i64);
+        }
+        if controller_connected {
+            state.decrement_controller_connections();
+            if let Some((_, controller_id, method_name)) = stream_binding {
+                if let Some(ref audit) = audit_logger {
+                    audit.controller_disconnect(&controller_id);
+                    audit.session_expired(&controller_id, "controller-stream-timeout", "");
+                }
+                relay_metrics
+                    .request_latency_seconds
+                    .with_label_values(&[&method_name, "stream_lifetime"])
+                    .observe(controller_stream_started_at.elapsed().as_secs_f64());
+            }
         }
     }
 }
@@ -883,12 +1035,15 @@ mod tests {
                     path: "/health".into(),
                 },
                 audit: Default::default(),
+                tracing: Default::default(),
+                alerting: Default::default(),
             },
         }
     }
 
     fn service_with_state(config: AppConfig) -> (RelayGrpcService, Arc<RelayState>) {
         let state = Arc::new(RelayState::new());
+        let relay_metrics = crate::relay_metrics::RelayMetrics::new().unwrap();
         let service = RelayGrpcService::new(
             state.clone(),
             &config,
@@ -896,6 +1051,7 @@ mod tests {
             crate::resource_monitor::ResourceMonitor::new(&config.relay.rate_limiting),
             None,
             None,
+            relay_metrics,
         );
         (service, state)
     }
@@ -909,6 +1065,7 @@ mod tests {
     ) {
         let state = Arc::new(RelayState::new());
         let (publisher, rx) = mqtt::test_publisher();
+        let relay_metrics = crate::relay_metrics::RelayMetrics::new().unwrap();
         let service = RelayGrpcService::new(
             state.clone(),
             &config,
@@ -916,6 +1073,7 @@ mod tests {
             crate::resource_monitor::ResourceMonitor::new(&config.relay.rate_limiting),
             Some(publisher),
             None,
+            relay_metrics,
         );
         (service, state, rx)
     }
@@ -1007,6 +1165,7 @@ mod tests {
             service.rbac.clone(),
             service.security_metrics.clone(),
             service.audit_logger.clone(),
+            service.relay_metrics.clone(),
             inbound,
             response_tx,
         ));
@@ -1557,6 +1716,8 @@ mod tests {
                     path: "/health".into(),
                 },
                 audit: Default::default(),
+                tracing: Default::default(),
+                alerting: Default::default(),
             },
         }
     }
@@ -2141,6 +2302,7 @@ impl RelayService for RelayGrpcService {
         let rbac = self.rbac.clone();
         let security_metrics = self.security_metrics.clone();
         let audit_logger = self.audit_logger.clone();
+        let relay_metrics = self.relay_metrics.clone();
 
         tokio::spawn(async move {
             Self::run_connect_to_device_stream(
@@ -2155,6 +2317,7 @@ impl RelayService for RelayGrpcService {
                 rbac,
                 security_metrics,
                 audit_logger,
+                relay_metrics,
                 inbound,
                 out_tx,
             )

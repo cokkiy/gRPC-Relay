@@ -1,10 +1,12 @@
 use clap::Parser;
 use relay::{
+    alerting::AlertingRuntime,
     config::AppConfig,
     grpc_service::RelayGrpcService,
     logging,
     mqtt,
     observability,
+    relay_metrics::RelayMetrics,
     resource_monitor::ResourceMonitor,
     state::RelayState,
     Result,
@@ -30,8 +32,14 @@ async fn main() {
 async fn run() -> Result<()> {
     let cli = Cli::parse();
     let config = AppConfig::load(&cli.config)?;
-    logging::init(&config.observability.logging);
     let security_metrics = relay::security_metrics::SecurityMetrics::default();
+    let relay_metrics = RelayMetrics::new()
+        .map_err(|err| relay::AppError::Validation(format!("metrics init failed: {err}")))?;
+    security_metrics.attach_relay_metrics(relay_metrics.clone());
+    let _tracer_provider = logging::init(
+        &config.observability.logging,
+        &config.observability.tracing,
+    );
 
     info!(
         relay_id = %config.relay.id,
@@ -40,20 +48,27 @@ async fn run() -> Result<()> {
     );
 
     let resource_monitor = ResourceMonitor::new(&config.relay.rate_limiting);
+    let relay_state = std::sync::Arc::new(RelayState::new());
+    let stream_router = relay::stream::StreamRouter::new(&config.relay.stream);
     let mqtt_runtime = mqtt::MqttRuntimeState::new(config.relay.mqtt.enabled);
     let health_config = config.observability.health.clone();
     let health_security_metrics = security_metrics.clone();
     let health_resource_monitor = resource_monitor.clone();
     let health_mqtt_runtime = mqtt_runtime.clone();
+    let health_state = relay_state.clone();
+    let health_stream_router = stream_router.clone();
+    let health_metrics = relay_metrics.clone();
     let health_server = tokio::spawn(observability::serve_health(
         health_config,
         env!("CARGO_PKG_VERSION"),
         health_security_metrics,
         health_resource_monitor,
         health_mqtt_runtime,
+        health_state,
+        health_stream_router,
+        health_metrics,
+        true,
     ));
-
-    let relay_state = std::sync::Arc::new(RelayState::new());
 
     let audit_logger = relay::audit::AuditLogger::new(
         &config.observability.audit,
@@ -67,12 +82,21 @@ async fn run() -> Result<()> {
             config.relay.address.clone(),
             relay_state.clone(),
             resource_monitor.clone(),
-            mqtt_runtime,
+            mqtt_runtime.clone(),
         );
         Some(handles.publisher)
     } else {
         None
     };
+
+    let _alerting = AlertingRuntime::new(config.observability.alerting.clone()).spawn(
+        config.relay.id.clone(),
+        relay_state.clone(),
+        stream_router.clone(),
+        resource_monitor.clone(),
+        mqtt_runtime.clone(),
+        relay_metrics.clone(),
+    );
 
     let grpc_service = RelayGrpcService::new(
         relay_state,
@@ -81,6 +105,7 @@ async fn run() -> Result<()> {
         resource_monitor,
         mqtt_publisher,
         audit_logger,
+        relay_metrics,
     );
     let stale_stream_cleanup = grpc_service.spawn_stale_stream_cleanup();
     let grpc_addr = config
