@@ -965,7 +965,6 @@ impl RelayGrpcService {
             if let Some((_, controller_id, method_name)) = stream_binding {
                 if let Some(ref audit) = audit_logger {
                     audit.controller_disconnect(&controller_id);
-                    audit.session_expired(&controller_id, "controller-stream-timeout", "");
                 }
                 relay_metrics
                     .request_latency_seconds
