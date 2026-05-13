@@ -43,3 +43,12 @@ relay-proto = { path = "../relay-proto" }
 
 [dev-dependencies]
 tempfile = "3"
+tokio-test = "0.4"
+wiremock = "0.6"
+testcontainers = "0.23"
+testcontainers-modules = { version = "0.11", features = ["mosquitto"] }
+fake = { version = "2", features = ["derive"] }
+proptest = "1"
+criterion = { version = "0.5", features = ["async_tokio"] }
+rstest = "0.23"
+tracing-test = "0.2"

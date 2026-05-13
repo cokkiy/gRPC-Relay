@@ -47,3 +47,38 @@ impl PendingRequests {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_seq_insert_and_complete() {
+        let pending = PendingRequests::new();
+        let rx = pending.insert(1).await.unwrap();
+        pending.complete(1, Ok(Bytes::from("hello"))).await;
+        let result = rx.await.unwrap().unwrap();
+        assert_eq!(result, Bytes::from("hello"));
+    }
+
+    #[tokio::test]
+    async fn session_seq_increments_correctly() {
+        let pending = PendingRequests::new();
+        let rx1 = pending.insert(1).await.unwrap();
+        let rx2 = pending.insert(2).await.unwrap();
+        pending.complete(1, Ok(Bytes::from("resp1"))).await;
+        pending.complete(2, Ok(Bytes::from("resp2"))).await;
+        assert_eq!(rx1.await.unwrap().unwrap(), Bytes::from("resp1"));
+        assert_eq!(rx2.await.unwrap().unwrap(), Bytes::from("resp2"));
+    }
+
+    #[tokio::test]
+    async fn session_seq_remove_after_complete() {
+        let pending = PendingRequests::new();
+        let _rx = pending.insert(1).await.unwrap();
+        pending.complete(1, Ok(Bytes::from("done"))).await;
+        // After completion, the entry is removed from the map
+        // Subsequent remove should not panic
+        pending.remove(1).await;
+    }
+}

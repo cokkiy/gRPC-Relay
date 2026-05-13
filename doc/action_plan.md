@@ -452,23 +452,23 @@
 
 需要落地的 15 种事件类型（按需求 7.4 审计日志事件类型清单）：
 
-| 事件类型 | 触发条件 | 优先级 |
-|---|---|---|
-| `device_connect` | 设备成功建立连接 | P0 |
-| `device_disconnect` | 设备主动断开或超时 | P0 |
-| `device_register` | 设备首次注册或重新注册 | P0 |
-| `controller_connect` | Controller 成功建立连接 | P0 |
-| `controller_disconnect` | Controller 主动断开 | P1 |
-| `controller_request` | Controller 发起设备访问请求 | P0 |
-| `stream_created` | 新的双向流建立 | P0 |
-| `stream_closed` | 流正常或异常关闭 | P0 |
-| `auth_failure` | Token 验证失败或证书无效 | P0 |
-| `auth_success` | 认证通过 | P1 |
-| `authorization_denied` | 权限检查失败 | P0 |
-| `rate_limit` | 请求频率超过限制 | P0 |
-| `session_resumed` | 设备重连后成功恢复会话 | P1 |
-| `session_expired` | 会话超时被清理 | P1 |
-| `error` | Relay 内部异常 | P0 |
+| 事件类型                | 触发条件                    | 优先级 |
+| ----------------------- | --------------------------- | ------ |
+| `device_connect`        | 设备成功建立连接            | P0     |
+| `device_disconnect`     | 设备主动断开或超时          | P0     |
+| `device_register`       | 设备首次注册或重新注册      | P0     |
+| `controller_connect`    | Controller 成功建立连接     | P0     |
+| `controller_disconnect` | Controller 主动断开         | P1     |
+| `controller_request`    | Controller 发起设备访问请求 | P0     |
+| `stream_created`        | 新的双向流建立              | P0     |
+| `stream_closed`         | 流正常或异常关闭            | P0     |
+| `auth_failure`          | Token 验证失败或证书无效    | P0     |
+| `auth_success`          | 认证通过                    | P1     |
+| `authorization_denied`  | 权限检查失败                | P0     |
+| `rate_limit`            | 请求频率超过限制            | P0     |
+| `session_resumed`       | 设备重连后成功恢复会话      | P1     |
+| `session_expired`       | 会话超时被清理              | P1     |
+| `error`                 | Relay 内部异常              | P0     |
 
 ##### 8.1.2 审计日志结构（需求定义）
 
@@ -631,17 +631,17 @@ Trace: controller_request_to_device
 
 **告警规则回顾**（需求 7.4 节 14 条告警规则）：
 
-| 指标 | Warning 阈值 | Critical 阈值 |
-|---|---|---|
-| 错误率 | > 1% | > 5% |
-| P99 延迟 | > 50ms | > 100ms |
-| 连接失败率 | > 5% | > 10% |
-| CPU | > 80% | > 95% |
-| 内存 | > 85% | > 95% |
-| 活跃连接数 | > 9000 | > 9500 |
-| 队列深度 | > 5000 | > 8000 |
-| MQTT 断连 | > 30s | > 60s |
-| 认证失败率 | > 10/min | > 50/min |
+| 指标       | Warning 阈值 | Critical 阈值 |
+| ---------- | ------------ | ------------- |
+| 错误率     | > 1%         | > 5%          |
+| P99 延迟   | > 50ms       | > 100ms       |
+| 连接失败率 | > 5%         | > 10%         |
+| CPU        | > 80%        | > 95%         |
+| 内存       | > 85%        | > 95%         |
+| 活跃连接数 | > 9000       | > 9500        |
+| 队列深度   | > 5000       | > 8000        |
+| MQTT 断连  | > 30s        | > 60s         |
+| 认证失败率 | > 10/min     | > 50/min      |
 
 **配置结构**（供后续实现直接使用，加在 `ObservabilityConfig` 下）：
 
@@ -696,16 +696,16 @@ observability:
 
 **本次 MVP 周期必须完成的（当前状态）**：
 
-| 序号 | 任务 | 说明 | 预估工作量 |
-|---|---|---|---|
-| 8.1.1 | `audit.rs` 基础设施 | 已完成 | ✅ |
-| 8.1.2 | 审计配置结构 | 已完成 | ✅ |
-| 8.1.3 | Auth/RBAC 埋点 | 已完成 | ✅ |
-| 8.1.4 | Connection 埋点 | 已完成 | ✅ |
-| 8.1.5 | Stream / Controller Request 埋点 | 已完成 | ✅ |
-| 8.1.6 | Rate Limiter 埋点 | 已完成 | ✅ |
-| 8.1.7 | Session 埋点 | 已完成 | ✅ |
-| 8.1.8 | 测试补齐 | 已完成基础覆盖，后续可继续扩展集成验证 | ✅ |
+| 序号  | 任务                             | 说明                                   | 预估工作量 |
+| ----- | -------------------------------- | -------------------------------------- | ---------- |
+| 8.1.1 | `audit.rs` 基础设施              | 已完成                                 | ✅          |
+| 8.1.2 | 审计配置结构                     | 已完成                                 | ✅          |
+| 8.1.3 | Auth/RBAC 埋点                   | 已完成                                 | ✅          |
+| 8.1.4 | Connection 埋点                  | 已完成                                 | ✅          |
+| 8.1.5 | Stream / Controller Request 埋点 | 已完成                                 | ✅          |
+| 8.1.6 | Rate Limiter 埋点                | 已完成                                 | ✅          |
+| 8.1.7 | Session 埋点                     | 已完成                                 | ✅          |
+| 8.1.8 | 测试补齐                         | 已完成基础覆盖，后续可继续扩展集成验证 | ✅          |
 
 **后续迭代（P2 可选增强）**：
 - 扩展 `/metrics` 指标维度与 histogram 覆盖
@@ -732,16 +732,444 @@ observability:
 ---
 
 ### 9) 测试体系
-**目标**：为 MVP 的正确性、稳定性和性能建立验证闭环。
+**目标**：为 MVP 的正确性、稳定性和性能建立验证闭环，确保各层功能符合需求规格，并为后续迭代建立可持续维护的测试基础设施。
 
-**交付物**
-- 单元测试：认证、授权、幂等、会话管理、限流
-- 集成测试：设备注册、Controller 查询、数据中继、MQTT 通知
-- 故障测试：断连、重连、MQTT 失败、认证失败
-- 基础性能测试：连接数、吞吐、延迟基线
+**状态总览**：
 
-**依赖**
-- 核心功能实现完成后逐步补齐
+| 测试类别   | 覆盖范围                                                            | 需要补齐的内容                                                                              |
+| ---------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| 单元测试   | `idempotency.rs`/`session.rs`/`rate_limiter.rs`/`audit.rs` 部分覆盖 | `auth.rs`/`rbac.rs`/`validator.rs`/`stream.rs`/`mqtt.rs` 完全无测试；已有模块需补充边界用例 |
+| 集成测试   | 无 `tests/` 目录                                                    | 7+ 个集成测试文件需新建                                                                     |
+| SDK 测试   | `device-sdk`/`controller-sdk` 完全无测试                            | SDK 单元测试需补齐                                                                          |
+| 性能测试   | 无基准测试                                                          | Criterion 基准 + 负载压测程序需新建                                                         |
+| 安全测试   | 无                                                                  | 8 个安全场景测试需新建                                                                      |
+| 故障注入   | 无                                                                  | 6 个故障场景测试需新建                                                                      |
+| 覆盖率门控 | 无                                                                  | CI 覆盖率门控配置需新建                                                                     |
+
+---
+
+#### 9.1 测试基础设施（Test Infrastructure）
+
+**位置**：`crates/relay/tests/` + `crates/relay/src/test_helpers.rs` + `crates/relay/benches/`
+
+##### 9.1.1 新增 dev-dependencies
+
+在 `crates/relay/Cargo.toml` 中新增：
+
+```toml
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }
+tokio-test = "0.4"
+tempfile = "3"                          # 已有，用于审计文件测试
+wiremock = "0.6"                        # HTTP mock server（认证服务 mock）
+testcontainers = "0.23"                 # Docker 容器化测试（MQTT Broker）
+testcontainers-modules = { version = "0.11", features = ["mosquitto"] }
+fake = { version = "2", features = ["derive"] }
+proptest = "1"                          # 属性测试（边界值）
+criterion = { version = "0.5", features = ["async_tokio"] }
+rstest = "0.23"                         # 参数化测试
+tracing-test = "0.2"                    # 测试中捕获 tracing 输出
+```
+
+##### 9.1.2 测试辅助模块
+
+新建 `crates/relay/src/test_helpers.rs`（`#[cfg(test)]` 门控）：
+
+```rust
+// 核心辅助工具（仅测试环境可用）
+pub mod test_helpers {
+    /// 构造测试用 AppState（不启动真实 gRPC 监听）
+    pub async fn build_test_state() -> Arc<AppState>;
+
+    /// 构造一个有效的 Controller JWT（HS256，给定 role / project_ids）
+    pub fn make_controller_jwt(controller_id: &str, role: &str, allowed_projects: &[&str]) -> String;
+
+    /// 构造一个有效的 Device Token
+    pub fn make_device_token(device_id: &str, project_id: &str) -> String;
+
+    /// 向 SessionManager 注入一个模拟在线设备
+    pub async fn register_mock_device(state: &AppState, device_id: &str, project_id: &str, region: &str);
+
+    /// 启动测试用 gRPC server（随机端口，返回 SocketAddr）
+    pub async fn start_test_relay_server(state: Arc<AppState>) -> (SocketAddr, JoinHandle<()>);
+
+    /// 启动测试用 MQTT Broker（通过 testcontainers）
+    pub async fn start_test_mqtt_broker() -> MqttBrokerHandle;
+
+    /// 创建测试用 Config（默认值 + 覆盖项）
+    pub fn test_config(overrides: &[(ConfigKey, &str)]) -> RelayConfig;
+}
+```
+
+##### 9.1.3 集成测试公共固件
+
+新建 `crates/relay/tests/common/`：
+
+```
+crates/relay/tests/
+├── common/
+│   ├── mod.rs                 # 公共模块导出
+│   ├── fixtures.rs            # 测试固件（证书、token、设备数据）
+│   └── mqtt_subscriber.rs     # 轻量 MQTT 订阅客户端（用于验证 MQTT 通知）
+├── test_device_lifecycle.rs   # 设备生命周期集成测试
+├── test_controller_flow.rs    # Controller 流程集成测试
+├── test_data_relay.rs         # 数据中继集成测试
+├── test_session_recovery.rs   # 会话恢复集成测试
+├── test_mqtt_discovery.rs     # MQTT 服务发现集成测试
+├── test_auth_integration.rs   # 认证授权端到端测试
+├── test_fault_scenarios.rs    # 故障注入测试
+└── test_security.rs           # 安全场景测试
+```
+
+---
+
+#### 9.2 单元测试（Unit Tests）
+
+**覆盖率目标**：核心逻辑（auth/rbac/idempotency/session/rate_limiter）> 90%，整体 > 80%。
+
+**工具**：`cargo test` + `cargo llvm-cov`。
+
+##### 9.2.1 认证模块（`auth.rs`）—— 新建 `#[cfg(test)] mod tests`
+
+| 测试函数                                       | 验证场景                                                      | 优先级 |
+| ---------------------------------------------- | ------------------------------------------------------------- | ------ |
+| `test_authenticate_controller_valid_jwt`       | 合法 JWT，正确解析 controller_id/role/project_ids             | P0     |
+| `test_authenticate_controller_expired_jwt`     | 过期 JWT 返回 `InvalidToken`                                  | P0     |
+| `test_authenticate_controller_wrong_signature` | 错误签名返回 `InvalidToken`                                   | P0     |
+| `test_authenticate_controller_id_mismatch`     | claims 中 controller_id 与请求不符返回 `ControllerIdMismatch` | P0     |
+| `test_authenticate_controller_revoked_token`   | 已撤销 token 返回 `RevokedToken`                              | P0     |
+| `test_authenticate_device_valid_token`         | 合法设备 token 返回 `DevicePrincipal`                         | P0     |
+| `test_authenticate_device_unknown_token`       | 未注册设备 token 返回 `UnknownDevice`                         | P0     |
+| `test_revoke_token_takes_effect`               | 撤销后再用同一 token 认证应失败                               | P1     |
+| `test_auth_disabled_allows_all`                | 认证关闭时任意 token 通过（`is_enabled=false`）               | P1     |
+| `test_token_prefix_truncation`                 | `token_prefix()` 只返回前 8 位                                | P0     |
+
+##### 9.2.2 授权模块（`rbac.rs`）—— 新建 `#[cfg(test)] mod tests`
+
+| 测试函数                                           | 验证场景                              | 优先级 |
+| -------------------------------------------------- | ------------------------------------- | ------ |
+| `test_admin_can_access_any_device`                 | admin 角色可访问任意设备              | P0     |
+| `test_operator_can_access_own_project_device`      | operator 可访问同 project 设备        | P0     |
+| `test_operator_cannot_access_other_project_device` | operator 不可访问其他 project 设备    | P0     |
+| `test_viewer_cannot_execute_control_command`       | viewer 禁止执行 method 白名单外操作   | P0     |
+| `test_method_not_in_whitelist_rejected`            | 方法不在白名单返回 `MethodNotAllowed` | P0     |
+| `test_rbac_disabled_allows_all`                    | RBAC 关闭时所有请求通过               | P1     |
+| `test_authorization_denied_returns_correct_error`  | 拒绝时返回正确错误类型                | P0     |
+
+##### 9.2.3 幂等缓存（`idempotency.rs`）—— 补充边界用例
+
+| 测试函数                                     | 验证场景                                      | 优先级 |
+| -------------------------------------------- | --------------------------------------------- | ------ |
+| `test_basic_idempotency`                     | 已有：相同 sequence_number 返回缓存响应       | P0     |
+| `test_expiry`                                | 已有：超时后缓存失效                          | P0     |
+| `test_capacity_eviction`                     | 已有：超过 10K LRU 逐出                       | P0     |
+| `test_concurrent_same_sequence`              | **补充**：并发相同 sequence_number 只处理一次 | P1     |
+| `test_cache_expired_return_device_not_found` | **补充**：缓存过期后重新转发到 device         | P1     |
+
+##### 9.2.4 会话管理（`session.rs`）—— 补充边界用例
+
+| 测试函数                                 | 验证场景                                       | 优先级 |
+| ---------------------------------------- | ---------------------------------------------- | ------ |
+| `test_register_device`                   | 已有：首次注册成功，返回 connection_id         | P0     |
+| `test_heartbeat_update`                  | 已有：心跳更新 last_seen                       | P0     |
+| `test_device_offline_after_timeout`      | **补充**：超时未心跳标记离线                   | P0     |
+| `test_session_recovery_within_window`    | 已有：300s 内重连恢复会话                      | P0     |
+| `test_session_recovery_after_expiry`     | **补充**：超过 300s 后重连创建新会话           | P0     |
+| `test_graceful_disconnect_cleans`        | **补充**：正常断开立即清理                     | P0     |
+| `test_duplicate_registration_replaces`   | **补充**：重新注册替换旧会话                   | P1     |
+| `test_list_devices_region_filter`        | **补充**：`list_online_devices` 按 region 过滤 | P1     |
+| `test_concurrent_register_and_heartbeat` | **补充**：并发操作无数据竞争                   | P1     |
+
+##### 9.2.5 限流器（`rate_limiter.rs`）—— 补充边界用例
+
+| 测试函数                                    | 验证场景                          | 优先级 |
+| ------------------------------------------- | --------------------------------- | ------ |
+| `test_device_rate_limit`                    | 已有：per-device 请求限流         | P0     |
+| `test_sliding_window`                       | 已有：滑动窗口计数器重置          | P0     |
+| `test_controller_rate_limit`                | **补充**：per-controller 连接限流 | P0     |
+| `test_global_rate_limit`                    | **补充**：全局连接限流            | P0     |
+| `test_concurrent_stream_limit_per_device`   | **补充**：单设备并发流超限        | P0     |
+| `test_bandwidth_limit_per_device`           | **补充**：单设备带宽超限          | P1     |
+| `test_cpu_threshold_rejects_connections`    | **补充**：CPU > 80% 拒绝新连接    | P1     |
+| `test_memory_threshold_rejects_connections` | **补充**：内存 > 12GB 拒绝新连接  | P1     |
+
+##### 9.2.6 输入验证（`validator.rs`）—— 新建 `#[cfg(test)] mod tests`
+
+| 测试函数                              | 验证场景                       | 优先级 |
+| ------------------------------------- | ------------------------------ | ------ |
+| `test_valid_device_id_accepted`       | 合法 device_id 格式通过        | P0     |
+| `test_invalid_device_id_rejected`     | 非法字符/超长 device_id 被拒绝 | P0     |
+| `test_valid_payload_size`             | payload < 10 MB 通过           | P0     |
+| `test_payload_size_exceeds_limit`     | payload >= 10 MB 被拒绝        | P0     |
+| `test_empty_required_fields_rejected` | 必填字段为空被拒绝             | P0     |
+| `test_method_name_whitelist_check`    | method_name 白名单校验         | P0     |
+
+##### 9.2.7 审计日志（`audit.rs`）—— 补充测试
+
+| 测试函数                         | 验证场景                              | 优先级 |
+| -------------------------------- | ------------------------------------- | ------ |
+| `test_token_sanitization_in_log` | 输出中 token 只有前 8 位              | P0     |
+| `test_no_payload_in_audit_log`   | 审计日志不含 `encrypted_payload` 明文 | P0     |
+| `test_audit_jsonl_format_valid`  | 每行输出为合法 JSON（JSONL）          | P0     |
+| `test_file_rotation_on_size`     | 文件超 100 MB 自动轮转                | P1     |
+| `test_async_write_non_blocking`  | 审计写入不阻塞调用方（mpsc 通道）     | P1     |
+| `test_event_filter_config`       | 配置指定类型时只记录对应事件          | P1     |
+
+##### 9.2.8 SDK 单元测试
+
+**`crates/device-sdk/src/`** —— 新建 `#[cfg(test)] mod tests`
+
+| 测试函数                        | 验证场景                               | 优先级 |
+| ------------------------------- | -------------------------------------- | ------ |
+| `test_backoff_sequence`         | 指数退避序列：0s → 2s → 4s → ... → 60s | P1     |
+| `test_backoff_max_delay_capped` | 最大延迟不超过 60s                     | P1     |
+| `test_config_defaults_valid`    | 默认配置可正常加载                     | P1     |
+| `test_config_from_yaml`         | YAML 配置正确解析到 Config 结构体      | P1     |
+
+**`crates/controller-sdk/src/`** —— 新建 `#[cfg(test)] mod tests`
+
+| 测试函数                     | 验证场景                             | 优先级 |
+| ---------------------------- | ------------------------------------ | ------ |
+| `test_session_seq_increment` | 每次发送 sequence_number 自增        | P1     |
+| `test_error_code_mapping`    | gRPC 错误码正确映射到 SDK Error 类型 | P1     |
+
+---
+
+#### 9.3 集成测试（Integration Tests）
+
+##### 9.3.1 设备生命周期测试（`test_device_lifecycle.rs`）
+
+| 测试用例                               | 验证内容                                                | 优先级 |
+| -------------------------------------- | ------------------------------------------------------- | ------ |
+| `test_register_and_heartbeat`          | 设备注册成功返回 connection_id；心跳维持在线            | P0     |
+| `test_device_in_list_after_register`   | 注册后 `ListOnlineDevices` 可查到                       | P0     |
+| `test_graceful_disconnect`             | 正常断开后从在线列表移除                                | P0     |
+| `test_timeout_disconnect`              | 使用 `tokio::time::advance` 模拟超时，验证离线判定      | P0     |
+| `test_reconnect_within_window`         | 断开后 300s 内重连，session_resumed=true                | P0     |
+| `test_reconnect_after_window`          | 超过 300s 重连，session_resumed=false，新 connection_id | P0     |
+| `test_concurrent_register_100_devices` | 100 个设备并发注册，全部成功                            | P1     |
+
+##### 9.3.2 Controller 流程测试（`test_controller_flow.rs`）
+
+| 测试用例                               | 验证内容                              | 优先级 |
+| -------------------------------------- | ------------------------------------- | ------ |
+| `test_list_empty_when_no_devices`      | 无设备时返回空列表                    | P0     |
+| `test_list_returns_registered_devices` | 有设备时返回完整列表                  | P0     |
+| `test_list_region_filter`              | region_filter 正确过滤设备            | P1     |
+| `test_connect_to_device_invalid_jwt`   | 无效 JWT 返回 gRPC `UNAUTHENTICATED`  | P0     |
+| `test_connect_to_device_no_permission` | 无权限访问返回 `UNAUTHORIZED`         | P0     |
+| `test_connect_to_device_not_found`     | 目标设备不存在返回 `DEVICE_NOT_FOUND` | P0     |
+| `test_connect_to_offline_device`       | 目标设备离线返回 `DEVICE_OFFLINE`     | P0     |
+
+##### 9.3.3 数据中继测试（`test_data_relay.rs`）
+
+| 测试用例                                 | 验证内容                                                      | 优先级 |
+| ---------------------------------------- | ------------------------------------------------------------- | ------ |
+| `test_bidirectional_relay`               | Controller 发送 → Device 收到 → Device 返回 → Controller 收到 | P0     |
+| `test_relay_opaque_forward`              | Relay 转发时不修改加密 payload（字节完全一致）                | P0     |
+| `test_idempotent_not_duplicated`         | 相同 sequence_number 重发，设备只收到一次                     | P0     |
+| `test_large_payload_10mb`                | 10 MB 大 payload 正常转发                                     | P0     |
+| `test_oversized_payload_rejected`        | 超过 10 MB payload 被拒绝（不进入转发逻辑）                   | P0     |
+| `test_concurrent_streams_10_controllers` | 10 个 Controller 并发向同一设备发请求，全部正确路由           | P1     |
+
+##### 9.3.4 会话恢复测试（`test_session_recovery.rs`）
+
+| 测试用例                                         | 验证内容                                              | 优先级 |
+| ------------------------------------------------ | ----------------------------------------------------- | ------ |
+| `test_recovery_restores_connection`              | 重连后会话恢复，返回原 connection_id                  | P1     |
+| `test_pending_messages_delivered_after_recovery` | 断线期间缓冲的消息在重连后投递                        | P1     |
+| `test_controller_notified_on_recovery`           | 设备重连后 Controller 收到在线通知（via MQTT 或查询） | P1     |
+
+##### 9.3.5 MQTT 服务发现测试（`test_mqtt_discovery.rs`）
+
+使用 `testcontainers-modules::mosquitto` 启动真实 MQTT Broker 容器。需要 Docker 环境。
+
+| 测试用例                                           | 验证内容                                                        | 优先级 |
+| -------------------------------------------------- | --------------------------------------------------------------- | ------ |
+| `test_device_online_published`                     | 设备注册后订阅端收到 `relay/device/online`，字段完整            | P1     |
+| `test_device_offline_graceful_published`           | 正常断开后收到 `relay/device/offline`，reason=graceful_shutdown | P1     |
+| `test_device_offline_timeout_published`            | 心跳超时后收到 `relay/device/offline`，reason=timeout           | P1     |
+| `test_relay_telemetry_periodic_publish`            | `telemetry/relay/{relay_id}` 定期发布                           | P1     |
+| `test_mqtt_broker_disconnect_graceful_degradation` | MQTT Broker 停止时 gRPC 继续工作                                | P1     |
+| `test_list_fallback_when_mqtt_unavailable`         | MQTT 不可用时 `ListOnlineDevices` 作为补偿                      | P1     |
+
+##### 9.3.6 认证授权端到端测试（`test_auth_integration.rs`）
+
+| 测试用例                               | 验证内容                             | 优先级 |
+| -------------------------------------- | ------------------------------------ | ------ |
+| `test_device_invalid_token_rejected`   | 设备使用无效 token 注册被拒绝        | P1     |
+| `test_controller_invalid_jwt_rejected` | Controller 使用无效 JWT 被拒绝       | P1     |
+| `test_controller_expired_jwt_rejected` | Controller 使用过期 JWT 被拒绝       | P1     |
+| `test_revoked_token_immediately_fails` | 调用撤销接口后该 token 立即失效      | P1     |
+| `test_viewer_cannot_send_command`      | viewer 角色尝试控制命令被拒绝        | P1     |
+| `test_cross_project_access_denied`     | Controller 跨 project 访问设备被拒绝 | P1     |
+| `test_auth_failure_audit_event`        | 认证失败触发 `auth_failure` 审计事件 | P1     |
+
+---
+
+#### 9.4 故障注入测试（Fault Injection）
+
+**目录**：`crates/relay/tests/test_fault_scenarios.rs`
+
+**工具**：`tokio::time::pause/advance`、Docker 容器启停
+
+| 测试用例                                    | 注入类型             | 验证内容                        | 优先级 |
+| ------------------------------------------- | -------------------- | ------------------------------- | ------ |
+| `test_device_reconnect_after_network_loss`  | 模拟网络中断后恢复   | 设备重连成功，会话可恢复        | P1     |
+| `test_heartbeat_timeout_marks_offline`      | 时间快进 > 300s      | 设备标记离线，MQTT 离线通知发出 | P1     |
+| `test_mqtt_broker_failure_relay_continues`  | MQTT Broker 容器停止 | gRPC 转发链路继续正常工作       | P1     |
+| `test_mqtt_reconnect_after_broker_recovery` | MQTT Broker 恢复     | Relay 自动重连，恢复状态发布    | P1     |
+| `test_batch_100_devices_disconnect`         | 100 个设备同时断连   | 无内存泄漏，资源正确释放        | P1     |
+| `test_rate_limit_under_burst_traffic`       | 突发请求超过限流阈值 | 超限请求被拒绝，正常请求继续    | P1     |
+
+---
+
+#### 9.5 安全测试（Security Tests）
+
+**目录**：`crates/relay/tests/test_security.rs`
+
+| 测试用例                                      | 验证场景                                      | 优先级 |
+| --------------------------------------------- | --------------------------------------------- | ------ |
+| `test_unauthenticated_request_rejected`       | 不携带 token 的请求被拒绝                     | P1     |
+| `test_forged_jwt_rejected`                    | 使用不同密钥签名的 JWT 被拒绝                 | P1     |
+| `test_cross_device_access_rejected`           | Controller A 无法访问 Controller B 的专属设备 | P1     |
+| `test_replay_with_duplicate_sequence`         | 重放相同 sequence_number 不触发重复执行       | P1     |
+| `test_oversized_payload_rejected`             | payload > 10 MB 立即被拒绝（不进入转发逻辑）  | P1     |
+| `test_device_impersonation_rejected`          | 设备 A 使用设备 B 的 device_id 被拒绝         | P1     |
+| `test_connection_rate_limit_per_ip`           | 单 IP 连接速率超限后新连接被拒绝              | P1     |
+| `test_token_revocation_immediately_effective` | 撤销后无缓存窗口内立即生效                    | P1     |
+
+---
+
+#### 9.6 性能测试（Performance Tests）
+
+##### 9.6.1 Criterion 微基准测试
+
+**目录**：`crates/relay/benches/`
+
+| 基准测试                                                        | 指标目标                           | 优先级 |
+| --------------------------------------------------------------- | ---------------------------------- | ------ |
+| `bench_auth.rs` — `bench_jwt_verification`                      | 单次 JWT 验证 < 0.1ms              | P1     |
+| `bench_idempotency.rs` — `bench_cache_hit` / `bench_cache_miss` | 缓存命中 < 0.01ms，未命中 < 0.05ms | P1     |
+| `bench_session.rs` — `bench_session_lookup`                     | DashMap 查找 < 0.01ms              | P1     |
+| `bench_rate_limiter.rs` — `bench_rate_check`                    | 单次限流检查 < 0.05ms              | P1     |
+
+##### 9.6.2 负载场景测试（作为 example 手动运行）
+
+**目录**：`crates/relay/examples/`
+
+| 场景                                       | 目标                                      | 验收标准                                            | 优先级 |
+| ------------------------------------------ | ----------------------------------------- | --------------------------------------------------- | ------ |
+| **连接压力**（`load_test_connections.rs`） | 10,000 并发设备长连接                     | 全部建立成功；CPU < 80%；内存 < 2 GB；P99 建立 < 1s | P2     |
+| **流吞吐量**（`load_test_streams.rs`）     | 1,000 并发活跃流 × 1MB 消息               | P99 延迟 < 20ms；平均吞吐 > 100 MB/s                | P2     |
+| **延迟基线**（`load_test_latency.rs`）     | 1,000 设备 + 100 Controller 小消息（1KB） | P50 < 5ms；P99 < 20ms；P99.9 < 50ms                 | P2     |
+
+---
+
+#### 9.7 覆盖率与 CI 集成
+
+##### 9.7.1 覆盖率工具
+
+```bash
+# 安装
+cargo install cargo-llvm-cov
+
+# 运行覆盖率分析（单元 + 集成测试）
+cargo llvm-cov --workspace --html --output-dir coverage/
+
+# 覆盖率门控（CI 中）
+cargo llvm-cov --workspace --fail-under-lines 80
+```
+
+##### 9.7.2 CI 测试阶段划分
+
+| CI 阶段            | 命令                                               | 触发时机              |
+| ------------------ | -------------------------------------------------- | --------------------- |
+| `test-unit`        | `cargo test --workspace --lib`                     | 每次 PR/push          |
+| `test-integration` | `cargo test --workspace --test '*'`（需 Docker）   | 每次 PR               |
+| `test-coverage`    | `cargo llvm-cov --workspace --fail-under-lines 80` | 每次 PR               |
+| `bench-check`      | `cargo bench --no-run`（仅验证编译）               | 每次 PR               |
+| `bench-run`        | `cargo bench` 完整运行                             | 手动 / 发版前         |
+| `perf-test`        | `cargo run --example load_test_connections`        | 手动 / Week 12 验收前 |
+
+---
+
+#### 9.8 交付物清单
+
+| 序号  | 交付物                           | 文件路径                                               | 优先级 |
+| ----- | -------------------------------- | ------------------------------------------------------ | ------ |
+| 9.1a  | 测试辅助模块                     | `crates/relay/src/test_helpers.rs`                     | P0     |
+| 9.1b  | 集成测试公共目录                 | `crates/relay/tests/common/`                           | P0     |
+| 9.2.1 | auth.rs 单元测试（10 个）        | `crates/relay/src/auth.rs`                             | P0     |
+| 9.2.2 | rbac.rs 单元测试（7 个）         | `crates/relay/src/rbac.rs`                             | P0     |
+| 9.2.3 | idempotency.rs 补充测试（2 个）  | `crates/relay/src/idempotency.rs`                      | P0     |
+| 9.2.4 | session.rs 补充测试（5 个）      | `crates/relay/src/session.rs`                          | P0     |
+| 9.2.5 | rate_limiter.rs 补充测试（6 个） | `crates/relay/src/rate_limiter.rs`                     | P0     |
+| 9.2.6 | validator.rs 单元测试（6 个）    | `crates/relay/src/validator.rs`                        | P0     |
+| 9.2.7 | audit.rs 补充测试（6 个）        | `crates/relay/src/audit.rs`                            | P0     |
+| 9.2.8 | SDK 单元测试                     | `crates/device-sdk/src/`、`crates/controller-sdk/src/` | P1     |
+| 9.3.1 | 设备生命周期集成测试（7 个）     | `crates/relay/tests/test_device_lifecycle.rs`          | P0     |
+| 9.3.2 | Controller 流程集成测试（7 个）  | `crates/relay/tests/test_controller_flow.rs`           | P0     |
+| 9.3.3 | 数据中继集成测试（6 个）         | `crates/relay/tests/test_data_relay.rs`                | P0     |
+| 9.3.4 | 会话恢复集成测试（3 个）         | `crates/relay/tests/test_session_recovery.rs`          | P1     |
+| 9.3.5 | MQTT 服务发现集成测试（6 个）    | `crates/relay/tests/test_mqtt_discovery.rs`            | P1     |
+| 9.3.6 | 认证授权集成测试（7 个）         | `crates/relay/tests/test_auth_integration.rs`          | P1     |
+| 9.4   | 故障注入测试（6 个）             | `crates/relay/tests/test_fault_scenarios.rs`           | P1     |
+| 9.5   | 安全测试（8 个）                 | `crates/relay/tests/test_security.rs`                  | P1     |
+| 9.6.1 | Criterion 基准测试（4 个 bench） | `crates/relay/benches/`                                | P1     |
+| 9.6.2 | 负载压测 examples（3 个）        | `crates/relay/examples/`                               | P2     |
+| 9.7   | CI 覆盖率门控配置                | `.github/workflows/` 或 CI 配置文件                    | P1     |
+
+---
+
+#### 9.9 执行顺序
+
+```
+前置依赖：核心功能实现完成（Section 3–8）
+    │
+    ├─ 步骤 1：补充 Cargo.toml dev-dependencies
+    │
+    ├─ 步骤 2：构建 test_helpers + tests/common 基础设施
+    │
+    ├─ 步骤 3：补齐单元测试
+    │   ├─ auth.rs（10 个测试）
+    │   ├─ rbac.rs（7 个测试）
+    │   ├─ validator.rs（6 个测试）
+    │   ├─ idempotency.rs 补充（2 个）
+    │   ├─ session.rs 补充（5 个）
+    │   ├─ rate_limiter.rs 补充（6 个）
+    │   ├─ audit.rs 补充（6 个）
+    │   └─ SDK 单元测试（4 + 2 个）
+    │
+    ├─ 步骤 4：集成测试
+    │   ├─ test_device_lifecycle.rs
+    │   ├─ test_controller_flow.rs
+    │   ├─ test_data_relay.rs
+    │   ├─ test_session_recovery.rs
+    │   ├─ test_mqtt_discovery.rs（需 Docker）
+    │   └─ test_auth_integration.rs
+    │
+    ├─ 步骤 5：故障注入 + 安全测试
+    │   ├─ test_fault_scenarios.rs
+    │   └─ test_security.rs
+    │
+    ├─ 步骤 6：基准测试（benches/）
+    │
+    └─ 步骤 7：CI 覆盖率门控 + 负载压测 examples
+```
+
+---
+
+#### 9.10 验收标准
+
+| 类别                    | 标准                                                                    |
+| ----------------------- | ----------------------------------------------------------------------- |
+| **单元测试覆盖率**      | 核心模块（auth/rbac/idempotency/session/rate_limiter）> 90%；整体 > 80% |
+| **集成测试通过率**      | 所有 P0 集成测试 100% 通过                                              |
+| **安全测试**            | 8 个安全场景全部通过，无高危绕过                                        |
+| **故障恢复**            | MQTT 断连、设备重连场景测试通过，无崩溃                                 |
+| **性能基线**            | 4 个 Criterion 基准可运行并建立历史比对基线                             |
+| **负载验收（Week 12）** | P99 延迟 < 20ms；10K 连接建立成功；1 小时稳定性无内存泄漏               |
 
 ---
 
