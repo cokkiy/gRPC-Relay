@@ -36,7 +36,7 @@ async fn run() -> Result<()> {
     let relay_metrics = RelayMetrics::new()
         .map_err(|err| relay::AppError::Validation(format!("metrics init failed: {err}")))?;
     security_metrics.attach_relay_metrics(relay_metrics.clone());
-    let _tracer_provider = logging::init(
+    let tracer_provider = logging::init(
         &config.observability.logging,
         &config.observability.tracing,
     );
@@ -150,6 +150,10 @@ async fn run() -> Result<()> {
             signal.map_err(relay::AppError::ShutdownSignal)?;
             info!("shutdown signal received");
         }
+    }
+
+    if tracer_provider.is_some() {
+        opentelemetry::global::shutdown_tracer_provider();
     }
 
     Ok(())

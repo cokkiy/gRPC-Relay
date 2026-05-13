@@ -337,11 +337,11 @@ fn refresh_runtime_metrics_with_response(state: &HealthState, response: &HealthR
         .set(if state.mqtt_runtime.is_connected() { 1 } else { 0 });
     state
         .metrics
-        .mqtt_reconnect_total
+        .mqtt_reconnect_count
         .set(state.mqtt_runtime.reconnect_count() as i64);
     state
         .metrics
-        .mqtt_dropped_total
+        .mqtt_dropped_count
         .set(state.mqtt_runtime.dropped_total() as i64);
     state
         .metrics
@@ -454,7 +454,8 @@ mod tests {
         let value = serde_json::to_value(response).unwrap();
 
         assert_eq!(value["components"]["mqtt_client"]["status"], "healthy");
-        assert_eq!(value["status"], "healthy");
+        // Overall status is "degraded" because the QUIC listener is not active.
+        assert_eq!(value["status"], "degraded");
     }
 
     #[tokio::test]

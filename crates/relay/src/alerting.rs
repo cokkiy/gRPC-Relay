@@ -38,6 +38,7 @@ impl AlertingRuntime {
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut last_sent: HashMap<String, std::time::Instant> = HashMap::new();
             let mut last_state: HashMap<String, AlertingSeverity> = HashMap::new();
+            let mut condition_active_since: HashMap<String, std::time::Instant> = HashMap::new();
 
             loop {
                 ticker.tick().await;
@@ -53,12 +54,28 @@ impl AlertingRuntime {
 
                 for rule in &config.rules {
                     let Some(severity) = evaluate_rule(rule, &context) else {
+                        // Condition cleared – reset tracking for this rule
+                        condition_active_since.remove(&rule.name);
                         last_state.remove(&rule.name);
                         continue;
                     };
 
-                    let suppress_until = last_sent.get(&rule.name).copied();
                     let now = std::time::Instant::now();
+
+                    // Track when the condition first became true
+                    let active_since = *condition_active_since
+                        .entry(rule.name.clone())
+                        .or_insert(now);
+
+                    // If a duration is configured, the condition must hold for that long
+                    if let Some(duration_secs) = rule.duration_seconds {
+                        let required = std::time::Duration::from_secs(duration_secs);
+                        if now.saturating_duration_since(active_since) < required {
+                            continue;
+                        }
+                    }
+
+                    let suppress_until = last_sent.get(&rule.name).copied();
                     let min_interval =
                         std::time::Duration::from_secs(config.suppression.min_interval_seconds);
                     if suppress_until

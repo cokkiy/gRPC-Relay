@@ -181,6 +181,7 @@ struct FileAuditWriter {
     file_path: PathBuf,
     max_size: u64,
     max_backups: usize,
+    retention_days: u32,
     bytes_written: std::sync::atomic::AtomicU64,
 }
 
@@ -189,6 +190,7 @@ impl FileAuditWriter {
         file_path: PathBuf,
         max_size_mb: u64,
         max_backups: usize,
+        retention_days: u32,
     ) -> std::io::Result<Self> {
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent)?;
@@ -202,28 +204,78 @@ impl FileAuditWriter {
         let metadata = file.metadata()?;
         let bytes_written = std::sync::atomic::AtomicU64::new(metadata.len());
 
-        Ok(Self {
+        let writer = Self {
             writer: std::sync::Mutex::new(BufWriter::new(file)),
             file_path,
             max_size: max_size_mb * 1024 * 1024,
             max_backups,
+            retention_days,
             bytes_written,
-        })
+        };
+        writer.cleanup_old_backups();
+        Ok(writer)
+    }
+
+    /// Delete rotated backup files that are older than `retention_days`.
+    fn cleanup_old_backups(&self) {
+        if self.retention_days == 0 {
+            return;
+        }
+        let cutoff = std::time::SystemTime::now()
+            - std::time::Duration::from_secs(self.retention_days as u64 * 24 * 3600);
+
+        for i in 1..=(self.max_backups + 1) {
+            let backup = self.file_path.with_extension(format!("log.{i}"));
+            if !backup.exists() {
+                break;
+            }
+            let age = fs::metadata(&backup)
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            if age <= cutoff {
+                if let Err(e) = fs::remove_file(&backup) {
+                    tracing::warn!(
+                        error = %e,
+                        path = %backup.display(),
+                        "failed to remove old audit log backup"
+                    );
+                }
+            }
+        }
     }
 
     fn rotate(&self) -> std::io::Result<()> {
+        // Take the writer lock and flush before renaming to ensure all buffered
+        // data is persisted and no concurrent writes occur during the rename.
+        let mut writer = self.writer.lock().unwrap();
+        writer.flush()?;
+
         // Rotate old backup files: audit.log.N -> audit.log.(N+1)
         for i in (1..self.max_backups).rev() {
             let old = self.file_path.with_extension(format!("log.{i}"));
             let new = self.file_path.with_extension(format!("log.{}", i + 1));
             if old.exists() {
-                let _ = fs::rename(&old, &new);
+                if let Err(e) = fs::rename(&old, &new) {
+                    tracing::warn!(
+                        error = %e,
+                        from = %old.display(),
+                        to = %new.display(),
+                        "audit log backup rotation failed"
+                    );
+                }
             }
         }
 
         // Rotate current audit.log -> audit.log.1
         let first_backup = self.file_path.with_extension("log.1");
-        let _ = fs::rename(&self.file_path, &first_backup);
+        if let Err(e) = fs::rename(&self.file_path, &first_backup) {
+            tracing::error!(
+                error = %e,
+                path = %self.file_path.display(),
+                "failed to rename active audit log for rotation; rotation skipped"
+            );
+            return Err(e);
+        }
 
         // Create a fresh audit.log
         let file = OpenOptions::new()
@@ -231,9 +283,13 @@ impl FileAuditWriter {
             .append(true)
             .open(&self.file_path)?;
 
-        let mut writer = self.writer.lock().unwrap();
         *writer = BufWriter::new(file);
         self.bytes_written.store(0, std::sync::atomic::Ordering::Relaxed);
+
+        // Drop the lock before running retention cleanup (avoids holding the
+        // writer lock during potentially slow filesystem operations).
+        drop(writer);
+        self.cleanup_old_backups();
 
         Ok(())
     }
@@ -285,6 +341,7 @@ pub struct AuditLogger {
     tx: mpsc::Sender<String>,
     relay_id: String,
     enabled_events: Option<HashSet<String>>,
+    dropped_events: std::sync::atomic::AtomicU64,
 }
 
 impl AuditLogger {
@@ -303,7 +360,7 @@ impl AuditLogger {
             "stdout" => Box::new(StdoutAuditWriter),
             _ => {
                 let file_path = PathBuf::from(&config.file_path);
-                match FileAuditWriter::new(file_path, config.max_size_mb, config.max_backups) {
+                match FileAuditWriter::new(file_path, config.max_size_mb, config.max_backups, config.retention_days) {
                     Ok(w) => Box::new(w),
                     Err(e) => {
                         tracing::error!(
@@ -350,6 +407,7 @@ impl AuditLogger {
             tx,
             relay_id,
             enabled_events,
+            dropped_events: std::sync::atomic::AtomicU64::new(0),
         }))
     }
 
@@ -368,7 +426,20 @@ impl AuditLogger {
 
     fn send(&self, event: AuditEvent) {
         if let Ok(json) = serde_json::to_string(&event) {
-            let _ = self.tx.try_send(json);
+            if let Err(e) = self.tx.try_send(json) {
+                let dropped = self
+                    .dropped_events
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    + 1;
+                // Log every 100 drops to avoid flooding the log under sustained pressure.
+                if dropped % 100 == 1 {
+                    tracing::warn!(
+                        dropped_total = dropped,
+                        reason = %e,
+                        "audit channel full; events are being dropped"
+                    );
+                }
+            }
         }
     }
 
@@ -747,7 +818,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("audit.log");
 
-        let writer = FileAuditWriter::new(path.clone(), 1, 3).unwrap();
+        let writer = FileAuditWriter::new(path.clone(), 1, 3, 30).unwrap();
         writer.write_event(r#"{"event_type":"test"}"#.to_string()).unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
@@ -760,7 +831,7 @@ mod tests {
         let path = dir.path().join("audit.log");
 
         // 1 MB max, write enough to trigger rotation
-        let writer = FileAuditWriter::new(path.clone(), 1, 3).unwrap();
+        let writer = FileAuditWriter::new(path.clone(), 1, 3, 30).unwrap();
 
         // Write a large line (~100KB) multiple times to exceed 1MB
         let big_line = "x".repeat(100_000);

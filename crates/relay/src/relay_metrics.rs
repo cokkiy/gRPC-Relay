@@ -19,8 +19,8 @@ pub struct RelayMetrics {
     pub memory_usage_percent: Gauge,
     pub memory_used_bytes: Gauge,
     pub mqtt_connected: IntGauge,
-    pub mqtt_reconnect_total: IntGauge,
-    pub mqtt_dropped_total: IntGauge,
+    pub mqtt_reconnect_count: IntGauge,
+    pub mqtt_dropped_count: IntGauge,
     pub mqtt_queue_pending: IntGauge,
     pub health_status: IntGauge,
     pub component_health: GaugeVec,
@@ -81,12 +81,12 @@ impl RelayMetrics {
             "relay_mqtt_connected",
             "Current MQTT connected state",
         ))?;
-        let mqtt_reconnect_total = IntGauge::with_opts(Opts::new(
-            "relay_mqtt_reconnect_total",
+        let mqtt_reconnect_count = IntGauge::with_opts(Opts::new(
+            "relay_mqtt_reconnect_count",
             "Observed MQTT reconnect count",
         ))?;
-        let mqtt_dropped_total = IntGauge::with_opts(Opts::new(
-            "relay_mqtt_dropped_total",
+        let mqtt_dropped_count = IntGauge::with_opts(Opts::new(
+            "relay_mqtt_dropped_count",
             "Observed MQTT dropped publish count",
         ))?;
         let mqtt_queue_pending = IntGauge::with_opts(Opts::new(
@@ -134,8 +134,8 @@ impl RelayMetrics {
         registry.register(Box::new(memory_usage_percent.clone()))?;
         registry.register(Box::new(memory_used_bytes.clone()))?;
         registry.register(Box::new(mqtt_connected.clone()))?;
-        registry.register(Box::new(mqtt_reconnect_total.clone()))?;
-        registry.register(Box::new(mqtt_dropped_total.clone()))?;
+        registry.register(Box::new(mqtt_reconnect_count.clone()))?;
+        registry.register(Box::new(mqtt_dropped_count.clone()))?;
         registry.register(Box::new(mqtt_queue_pending.clone()))?;
         registry.register(Box::new(health_status.clone()))?;
         registry.register(Box::new(component_health.clone()))?;
@@ -157,8 +157,8 @@ impl RelayMetrics {
             memory_usage_percent,
             memory_used_bytes,
             mqtt_connected,
-            mqtt_reconnect_total,
-            mqtt_dropped_total,
+            mqtt_reconnect_count,
+            mqtt_dropped_count,
             mqtt_queue_pending,
             health_status,
             component_health,

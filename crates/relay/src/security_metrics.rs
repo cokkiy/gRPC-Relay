@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::relay_metrics::RelayMetrics;
 
@@ -16,7 +16,7 @@ struct SecurityMetricsInner {
     authorization_denied_total: AtomicU64,
     rate_limit_total: AtomicU64,
     revoked_tokens_total: AtomicU64,
-    relay_metrics: std::sync::Mutex<Option<RelayMetrics>>,
+    relay_metrics: OnceLock<RelayMetrics>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -33,15 +33,14 @@ pub struct SecurityMetricsSnapshot {
 
 impl SecurityMetrics {
     pub fn attach_relay_metrics(&self, relay_metrics: RelayMetrics) {
-        let mut guard = self.inner.relay_metrics.lock().unwrap();
-        *guard = Some(relay_metrics);
+        let _ = self.inner.relay_metrics.set(relay_metrics);
     }
 
     pub fn record_auth_success(&self) {
         self.inner
             .auth_success_total
             .fetch_add(1, Ordering::Relaxed);
-        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+        if let Some(metrics) = self.inner.relay_metrics.get() {
             metrics.auth_success_total.inc();
         }
     }
@@ -50,7 +49,7 @@ impl SecurityMetrics {
         self.inner
             .auth_failure_total
             .fetch_add(1, Ordering::Relaxed);
-        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+        if let Some(metrics) = self.inner.relay_metrics.get() {
             metrics.auth_failure_total.inc();
         }
     }
@@ -59,14 +58,14 @@ impl SecurityMetrics {
         self.inner
             .authorization_denied_total
             .fetch_add(1, Ordering::Relaxed);
-        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+        if let Some(metrics) = self.inner.relay_metrics.get() {
             metrics.authorization_denied_total.inc();
         }
     }
 
     pub fn record_rate_limit(&self) {
         self.inner.rate_limit_total.fetch_add(1, Ordering::Relaxed);
-        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+        if let Some(metrics) = self.inner.relay_metrics.get() {
             metrics.rate_limit_hits_total.inc();
         }
     }
@@ -75,7 +74,7 @@ impl SecurityMetrics {
         self.inner
             .revoked_tokens_total
             .fetch_add(1, Ordering::Relaxed);
-        if let Some(metrics) = self.inner.relay_metrics.lock().unwrap().as_ref() {
+        if let Some(metrics) = self.inner.relay_metrics.get() {
             metrics.revoked_tokens_total.inc();
         }
     }

@@ -55,6 +55,18 @@ pub fn init(
 fn build_tracer_provider(
     tracing_config: &TracingConfig,
 ) -> Result<TracerProvider, opentelemetry::trace::TraceError> {
+    if !tracing_config.exporter.eq_ignore_ascii_case("otlp") {
+        return Err(opentelemetry::trace::TraceError::Other(Box::new(
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "unsupported tracing exporter '{}'; only 'otlp' is supported",
+                    tracing_config.exporter
+                ),
+            ),
+        )));
+    }
+
     let resource = Resource::new(vec![
         KeyValue::new("service.name", tracing_config.service_name.clone()),
         KeyValue::new("service.version", env!("CARGO_PKG_VERSION")),
