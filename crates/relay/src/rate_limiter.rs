@@ -458,7 +458,7 @@ mod tests {
     fn controller_rate_limit_blocks_when_exceeded() {
         let config = RateLimitConfig {
             device_requests_per_second: 1000,
-            controller_requests_per_minute: 60, // 1 per second
+            controller_requests_per_minute: 1,
             global_requests_per_second: 100_000,
             ..test_config()
         };
@@ -485,34 +485,25 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_stream_limit_config_value() {
-        // Verify the config default for concurrent streams
-        let config = test_config();
-        assert_eq!(config.device_requests_per_second, 100);
-        // Just validate that the rate limiter can handle concurrent access
-        let rl = RateLimiter::new(&config);
-        // Multiple concurrent calls should not panic
-        assert!(rl.allow("dev-1", "ctrl-1"));
-    }
-
-    fn test_resource_config() -> RateLimitConfig {
-        RateLimitConfig {
-            cpu_threshold_percent: 80.0,
-            memory_threshold_mb: 12 * 1024,
+    fn concurrent_requests_share_controller_bucket() {
+        let config = RateLimitConfig {
+            device_requests_per_second: 1000,
+            controller_requests_per_minute: 1,
+            global_requests_per_second: 100_000,
             ..test_config()
+        };
+        let rl = std::sync::Arc::new(RateLimiter::new(&config));
+        let mut handles = Vec::new();
+        for _ in 0..20 {
+            let limiter = rl.clone();
+            handles.push(std::thread::spawn(move || limiter.allow("dev-1", "ctrl-1")));
         }
-    }
 
-    #[test]
-    fn cpu_threshold_rejects_connections() {
-        let config = test_resource_config();
-        assert_eq!(config.cpu_threshold_percent, 80.0);
-    }
-
-    #[test]
-    fn memory_threshold_configured() {
-        let config = test_resource_config();
-        // 12 GB in MB
-        assert_eq!(config.memory_threshold_mb, 12 * 1024);
+        let allowed = handles
+            .into_iter()
+            .map(|h| h.join().expect("thread should not panic"))
+            .filter(|allowed| *allowed)
+            .count();
+        assert_eq!(allowed, 1);
     }
 }

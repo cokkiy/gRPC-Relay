@@ -61,7 +61,7 @@ pub fn make_controller_jwt(
         controller_id: controller_id.to_string(),
         role: role.to_string(),
         allowed_project_ids: allowed_project_ids.iter().map(|s| s.to_string()).collect(),
-        exp: 9999999999, // far future
+        exp: 2_000_000_000, // far future and portable across 32/64-bit usize
         iss: None,
         aud: None,
     };
@@ -103,7 +103,7 @@ pub fn make_forged_jwt(controller_id: &str) -> String {
         controller_id: controller_id.to_string(),
         role: "admin".to_string(),
         allowed_project_ids: vec![],
-        exp: 9999999999,
+        exp: 2_000_000_000,
         iss: None,
         aud: None,
     };

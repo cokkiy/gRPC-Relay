@@ -106,7 +106,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrent_same_sequence_only_processes_once() {
+    async fn concurrent_reads_same_sequence_return_cached_response() {
         let cache = IdempotencyCache::new(100, 3600);
 
         // Insert a response for seq 1
@@ -135,13 +135,8 @@ mod tests {
         assert!(cache.get("dev-1", 1).await.is_some());
 
         // Wait for TTL to expire
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1100)).await;
 
-        // lru_time_cache may or may not have evicted; verify it handles expiry
-        // by checking that it at least existed initially
-        let after = cache.get("dev-1", 1).await;
-        // After 1 second the entry may or may not be available;
-        // the key assertion is that there's no panic or crash
-        let _ = after;
+        assert!(cache.get("dev-1", 1).await.is_none());
     }
 }

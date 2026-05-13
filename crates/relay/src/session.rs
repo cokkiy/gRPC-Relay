@@ -147,9 +147,14 @@ mod tests {
             .insert("conn-1".to_string(), "dev-1".to_string());
 
         // Register same device with new connection
-        state
+        if let Some(previous_session) = state
             .sessions_by_device_id
-            .insert("dev-1".to_string(), make_session("dev-1", "conn-2"));
+            .insert("dev-1".to_string(), make_session("dev-1", "conn-2"))
+        {
+            state
+                .connection_to_device_id
+                .remove(&previous_session.connection_id);
+        }
         state
             .connection_to_device_id
             .insert("conn-2".to_string(), "dev-1".to_string());
@@ -158,6 +163,7 @@ mod tests {
         assert!(reg.is_device_online("dev-1"));
         let session = reg.get_device_session("dev-1").unwrap();
         assert_eq!(session.connection_id, "conn-2");
+        assert!(!state.connection_to_device_id.contains_key("conn-1"));
     }
 
     #[test]
@@ -197,9 +203,10 @@ mod tests {
             }
         });
 
-        let _ = tokio::join!(handle1, handle2);
-        // No panic means no data race
-        assert!(state.sessions_by_device_id.len() <= 50);
+        let (register_result, heartbeat_result) = tokio::join!(handle1, handle2);
+        register_result.expect("register task should not panic");
+        heartbeat_result.expect("heartbeat task should not panic");
+        assert_eq!(state.sessions_by_device_id.len(), 50);
     }
 
     #[test]
