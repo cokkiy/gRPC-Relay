@@ -40,3 +40,62 @@ impl RetryBackoff {
         with_jitter.clamp(1.0, self.max_seconds as f64) as u64
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_initial_is_one() {
+        let b = RetryBackoff::new(1, 60);
+        let sleep = b.next_sleep_seconds(0);
+        assert!(sleep >= 1, "first attempt should be >= 1s, got {sleep}");
+    }
+
+    #[test]
+    fn backoff_increases_with_attempts() {
+        let b = RetryBackoff::new(1, 60);
+        let s1 = b.next_sleep_seconds(0);
+        let s3 = b.next_sleep_seconds(3);
+        assert!(
+            s3 >= s1,
+            "later attempts should have longer wait, got {s1} -> {s3}"
+        );
+    }
+
+    #[test]
+    fn backoff_max_delay_capped() {
+        let b = RetryBackoff::new(1, 10);
+        let s30 = b.next_sleep_seconds(30);
+        let s50 = b.next_sleep_seconds(50);
+        assert!(
+            s30 <= 15, // max 10 * jitter (~1.5)
+            "s30 should be capped near max=10, got {s30}"
+        );
+        assert!(s50 <= 15, "s50 should also be capped, got {s50}");
+    }
+
+    #[test]
+    fn backoff_jitter_produces_different_values() {
+        let b = RetryBackoff::new(10, 60);
+        // Same attempt should give same deterministic jitter
+        let v1 = b.next_sleep_seconds(5);
+        let v2 = b.next_sleep_seconds(5);
+        assert_eq!(v1, v2, "same attempt should produce same jitter");
+
+        // Different attempts should give different values
+        let v3 = b.next_sleep_seconds(6);
+        assert_ne!(v1, v3, "different attempts should give different jitter");
+    }
+
+    #[test]
+    fn backoff_constructor_clamps_values() {
+        let b = RetryBackoff::new(0, 0);
+        assert_eq!(b.initial_seconds, 1);
+        assert_eq!(b.max_seconds, 1);
+
+        let b = RetryBackoff::new(5, 3);
+        assert_eq!(b.initial_seconds, 5);
+        assert_eq!(b.max_seconds, 5);
+    }
+}

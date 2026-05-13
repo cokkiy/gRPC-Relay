@@ -238,3 +238,79 @@ fn read_bool_env(name: &str, default: bool) -> Result<bool> {
         Err(_) => Ok(default),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_validate_ok() {
+        let cfg = DeviceSdkConfig {
+            relay: RelayEndpointConfig {
+                tcp_addr: "127.0.0.1:50051".into(),
+                quic_addr: None,
+            },
+            device_id: "dev-1".into(),
+            token: "tok-1".into(),
+            metadata: HashMap::new(),
+            session_recovery_window_seconds: 300,
+            heartbeat_interval_seconds: 30,
+            backoff_initial_seconds: 1,
+            backoff_max_seconds: 60,
+            transport: TransportConfig::default(),
+        };
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn config_validate_fails_empty_device_id() {
+        let cfg = DeviceSdkConfig {
+            device_id: "".into(),
+            token: "tok-1".into(),
+            backoff_initial_seconds: 1,
+            backoff_max_seconds: 60,
+            heartbeat_interval_seconds: 30,
+            ..build_valid()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn config_validate_fails_empty_token() {
+        let cfg = DeviceSdkConfig {
+            device_id: "dev-1".into(),
+            token: "".into(),
+            backoff_initial_seconds: 1,
+            backoff_max_seconds: 60,
+            heartbeat_interval_seconds: 30,
+            ..build_valid()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn config_validate_fails_zero_heartbeat() {
+        let cfg = DeviceSdkConfig {
+            heartbeat_interval_seconds: 0,
+            ..build_valid()
+        };
+        assert!(cfg.validate().is_err());
+    }
+
+    fn build_valid() -> DeviceSdkConfig {
+        DeviceSdkConfig {
+            relay: RelayEndpointConfig {
+                tcp_addr: "127.0.0.1:50051".into(),
+                quic_addr: None,
+            },
+            device_id: "dev-1".into(),
+            token: "tok-1".into(),
+            metadata: HashMap::new(),
+            session_recovery_window_seconds: 300,
+            heartbeat_interval_seconds: 30,
+            backoff_initial_seconds: 1,
+            backoff_max_seconds: 60,
+            transport: TransportConfig::default(),
+        }
+    }
+}
