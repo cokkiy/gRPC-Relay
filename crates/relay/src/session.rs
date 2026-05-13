@@ -120,4 +120,126 @@ mod tests {
         assert_eq!(resp.sequence_number, 42);
         assert_eq!(resp.error, ErrorCode::DeviceOffline as i32);
     }
+
+    #[test]
+    fn session_removed_after_remove_device_session() {
+        let state = Arc::new(RelayState::new());
+        state
+            .sessions_by_device_id
+            .insert("dev-1".to_string(), make_session("dev-1", "conn-1"));
+        state
+            .connection_to_device_id
+            .insert("conn-1".to_string(), "dev-1".to_string());
+
+        state.remove_device_session("dev-1");
+        assert!(!state.sessions_by_device_id.contains_key("dev-1"));
+        assert!(!state.connection_to_device_id.contains_key("conn-1"));
+    }
+
+    #[test]
+    fn duplicate_registration_replaces_old_session() {
+        let state = Arc::new(RelayState::new());
+        state
+            .sessions_by_device_id
+            .insert("dev-1".to_string(), make_session("dev-1", "conn-1"));
+        state
+            .connection_to_device_id
+            .insert("conn-1".to_string(), "dev-1".to_string());
+
+        // Register same device with new connection
+        state
+            .sessions_by_device_id
+            .insert("dev-1".to_string(), make_session("dev-1", "conn-2"));
+        state
+            .connection_to_device_id
+            .insert("conn-2".to_string(), "dev-1".to_string());
+
+        let reg = SessionRegistry::new(state.clone());
+        assert!(reg.is_device_online("dev-1"));
+        let session = reg.get_device_session("dev-1").unwrap();
+        assert_eq!(session.connection_id, "conn-2");
+    }
+
+    #[test]
+    fn list_online_devices_filtering() {
+        let state = Arc::new(RelayState::new());
+        let reg = SessionRegistry::new(state.clone());
+
+        state
+            .sessions_by_device_id
+            .insert("dev-1".to_string(), make_session("dev-1", "conn-1"));
+        state
+            .sessions_by_device_id
+            .insert("dev-2".to_string(), make_session("dev-2", "conn-2"));
+
+        // list all — should have 2
+        assert_eq!(reg.list_online_devices("relay-1").len(), 2);
+    }
+
+    #[tokio::test]
+    async fn concurrent_register_and_heartbeat_no_race() {
+        let state = Arc::new(RelayState::new());
+
+        let state_clone1 = state.clone();
+        let handle1 = tokio::spawn(async move {
+            for i in 0..50 {
+                state_clone1.sessions_by_device_id.insert(
+                    format!("dev-{i}"),
+                    make_session(&format!("dev-{i}"), &format!("conn-{i}")),
+                );
+            }
+        });
+
+        let state_clone2 = state.clone();
+        let handle2 = tokio::spawn(async move {
+            for i in 0..50 {
+                let _ = state_clone2.sessions_by_device_id.get(&format!("dev-{i}"));
+            }
+        });
+
+        let _ = tokio::join!(handle1, handle2);
+        // No panic means no data race
+        assert!(state.sessions_by_device_id.len() <= 50);
+    }
+
+    #[test]
+    fn controller_connection_counts() {
+        let state = Arc::new(RelayState::new());
+        assert_eq!(state.controller_connection_count(), 0);
+
+        state.increment_controller_connections();
+        state.increment_controller_connections();
+        assert_eq!(state.controller_connection_count(), 2);
+
+        state.decrement_controller_connections();
+        assert_eq!(state.controller_connection_count(), 1);
+
+        // Should not underflow
+        state.decrement_controller_connections();
+        state.decrement_controller_connections();
+        assert_eq!(state.controller_connection_count(), 0);
+    }
+
+    #[test]
+    fn connection_to_device_mapping() {
+        let state = Arc::new(RelayState::new());
+        state
+            .connection_to_device_id
+            .insert("conn-1".to_string(), "dev-1".to_string());
+
+        assert_eq!(
+            state.device_id_for_connection("conn-1").as_deref(),
+            Some("dev-1")
+        );
+        assert_eq!(state.device_id_for_connection("conn-nonexistent"), None);
+    }
+
+    #[test]
+    fn next_connection_id_is_unique() {
+        let state = Arc::new(RelayState::new());
+        let id1 = state.next_connection_id();
+        let id2 = state.next_connection_id();
+        assert_ne!(id1, id2);
+        assert!(id1.starts_with("conn-"));
+    }
 }

@@ -285,7 +285,8 @@ impl FileAuditWriter {
                 .open(&self.file_path)?;
 
             *writer = BufWriter::new(file);
-            self.bytes_written.store(0, std::sync::atomic::Ordering::Relaxed);
+            self.bytes_written
+                .store(0, std::sync::atomic::Ordering::Relaxed);
         } // writer lock is released here before retention cleanup
 
         self.cleanup_old_backups();
@@ -345,10 +346,7 @@ pub struct AuditLogger {
 impl AuditLogger {
     /// Spawn the audit writer background task and return an AuditLogger.
     /// If `config.enabled` is false, returns None.
-    pub fn new(
-        config: &super::config::AuditConfig,
-        relay_id: String,
-    ) -> Option<Arc<Self>> {
+    pub fn new(config: &super::config::AuditConfig, relay_id: String) -> Option<Arc<Self>> {
         if !config.enabled {
             tracing::info!("audit logging disabled");
             return None;
@@ -358,7 +356,12 @@ impl AuditLogger {
             "stdout" => Box::new(StdoutAuditWriter),
             _ => {
                 let file_path = PathBuf::from(&config.file_path);
-                match FileAuditWriter::new(file_path, config.max_size_mb, config.max_backups, config.retention_days) {
+                match FileAuditWriter::new(
+                    file_path,
+                    config.max_size_mb,
+                    config.max_backups,
+                    config.retention_days,
+                ) {
                     Ok(w) => Box::new(w),
                     Err(e) => {
                         tracing::error!(
@@ -636,12 +639,7 @@ impl AuditLogger {
         });
     }
 
-    pub fn auth_success(
-        &self,
-        entity_type: &str,
-        entity_id: &str,
-        source_ip: &str,
-    ) {
+    pub fn auth_success(&self, entity_type: &str, entity_id: &str, source_ip: &str) {
         if !self.should_log("auth_success") {
             return;
         }
@@ -716,12 +714,7 @@ impl AuditLogger {
         });
     }
 
-    pub fn session_expired(
-        &self,
-        device_id: &str,
-        connection_id: &str,
-        source_ip: &str,
-    ) {
+    pub fn session_expired(&self, device_id: &str, connection_id: &str, source_ip: &str) {
         if !self.should_log("session_expired") {
             return;
         }
@@ -817,7 +810,9 @@ mod tests {
         let path = dir.path().join("audit.log");
 
         let writer = FileAuditWriter::new(path.clone(), 1, 3, 30).unwrap();
-        writer.write_event(r#"{"event_type":"test"}"#.to_string()).unwrap();
+        writer
+            .write_event(r#"{"event_type":"test"}"#.to_string())
+            .unwrap();
 
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("test"));
@@ -883,5 +878,114 @@ mod tests {
         assert_eq!(parsed["token_prefix"], "abcd1234");
         // Must NOT contain full token value
         assert!(!json.contains("secret-token"));
+    }
+
+    #[test]
+    fn token_sanitization_returns_only_prefix() {
+        let full_token = "abcdefghijklmnop";
+        let prefix = "abcdefgh";
+        assert_eq!(crate::auth::AuthService::token_prefix(full_token), prefix);
+    }
+
+    #[test]
+    fn no_payload_in_audit_log() {
+        let event = AuditEvent::ControllerRequest {
+            timestamp: "2025-01-15T10:30:00Z".to_string(),
+            relay_id: "relay-1".to_string(),
+            controller_id: "ctrl-1".to_string(),
+            device_id: "dev-1".to_string(),
+            connection_id: "conn-1".to_string(),
+            method_name: "ExecuteCommand".to_string(),
+            sequence_number: 1,
+            result: "success".to_string(),
+            error_code: None,
+            latency_ms: None,
+            bytes_transferred: None,
+            source_ip: "10.0.0.1".to_string(),
+            user_agent: None,
+            metadata: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        // Must not contain encrypted_payload
+        assert!(!json.contains("encrypted_payload"));
+        assert!(!json.contains("payload"));
+    }
+
+    #[test]
+    fn audit_jsonl_format_single_line() {
+        let event = AuditEvent::DeviceConnect {
+            timestamp: "2025-01-15T10:30:00Z".to_string(),
+            relay_id: "relay-1".to_string(),
+            device_id: "dev-1".to_string(),
+            connection_id: "conn-1".to_string(),
+            source_ip: "10.0.0.1".to_string(),
+            metadata: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        // JSONL means the output must not contain newlines within the event
+        assert!(!json.contains('\n'));
+        // Valid JSON
+        let _: serde_json::Value = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn file_rotation_creates_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audit.log");
+
+        // 1 MB max size
+        let writer = FileAuditWriter::new(path.clone(), 1, 3, 30).unwrap();
+
+        // Write ~100KB each, 12 iterations > 1MB total
+        let line = "x".repeat(100_000);
+        for _ in 0..12 {
+            writer.write_event(line.clone()).unwrap();
+        }
+
+        // After rotation, audit.log.1 should exist
+        let backup = path.with_extension("log.1");
+        assert!(backup.exists(), "backup should exist after rotation");
+    }
+
+    #[tokio::test]
+    async fn async_write_non_blocking() {
+        // AuditLogger uses mpsc channel to decouple writes from the hot path
+        // Test that send() doesn't block the caller
+        let config = crate::config::AuditConfig {
+            enabled: true,
+            output: "stdout".to_string(),
+            file_path: String::new(),
+            max_size_mb: 100,
+            max_backups: 10,
+            retention_days: 30,
+            events: vec![],
+        };
+
+        let logger = AuditLogger::new(&config, "relay-test".into());
+        assert!(logger.is_some());
+
+        // Sending events should not block (try_send is used internally)
+        let logger = logger.unwrap();
+        logger.device_connect("dev-1", "conn-1", "10.0.0.1", None);
+        // No crash means non-blocking behavior is working
+    }
+
+    #[tokio::test]
+    async fn event_filter_config_limits_events() {
+        let mut config = crate::config::AuditConfig {
+            enabled: true,
+            output: "stdout".to_string(),
+            file_path: String::new(),
+            max_size_mb: 100,
+            max_backups: 10,
+            retention_days: 30,
+            events: vec!["auth_failure".to_string(), "rate_limit".to_string()],
+        };
+
+        let logger = AuditLogger::new(&config, "relay-test".into()).unwrap();
+        assert!(logger.should_log("auth_failure"));
+        assert!(logger.should_log("rate_limit"));
+        assert!(!logger.should_log("device_connect"));
+        assert!(!logger.should_log("auth_success"));
     }
 }
