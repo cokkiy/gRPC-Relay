@@ -116,7 +116,7 @@ jobs:
 
       - name: Set lowercase image name
         if: startsWith(github.ref, 'refs/tags/v')
-        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+        run: echo "IMAGE_NAME=ghcr.io/$(echo "$GITHUB_REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       - name: Push to GHCR
         if: startsWith(github.ref, 'refs/tags/v')

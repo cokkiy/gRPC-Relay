@@ -262,6 +262,9 @@ relay_cpu_usage_percent
 # 内存使用率
 relay_memory_usage_percent
 
+# 健康状态（0=DOWN, 1=DEGRADED, 2=UP）
+relay_health_status
+
 # 认证失败率（每分钟）
 rate(relay_auth_failures_total[1m])
 
