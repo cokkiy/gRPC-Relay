@@ -31,6 +31,30 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Verify release tag matches workspace version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import tomllib
+
+          with open("Cargo.toml", "rb") as f:
+              cargo_toml = tomllib.load(f)
+
+          version = cargo_toml["workspace"]["package"]["version"]
+          expected_tag = f"v{version}"
+          actual_tag = os.environ["RELEASE_TAG"]
+
+          if actual_tag != expected_tag:
+              print(
+                  f"Release tag mismatch: expected '{expected_tag}' from workspace.package.version, got '{actual_tag}'.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          PY
+
       - name: Publish relay-proto
         run: cargo publish -p relay-proto
 
