@@ -32,16 +32,16 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Publish relay-proto
-        run: cargo publish -p relay-proto --locked
+        run: cargo publish -p relay-proto
 
       - name: Wait for relay-proto index propagation
         run: sleep 30
 
       - name: Publish device-sdk
-        run: cargo publish -p device-sdk --locked
+        run: cargo publish -p device-sdk
 
       - name: Publish controller-sdk
-        run: cargo publish -p controller-sdk --locked
+        run: cargo publish -p controller-sdk
 
   docker-release:
     name: Build And Publish Release Image
