@@ -108,6 +108,7 @@ impl RelayGrpcService {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_device_connect_stream<S>(
         state: Arc<RelayState>,
         _session_registry: SessionRegistry,
@@ -458,6 +459,7 @@ impl RelayGrpcService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_connect_to_device_stream<S>(
         router: StreamRouter,
         cache: IdempotencyCache,
@@ -966,6 +968,7 @@ impl RelayGrpcService {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::auth::ControllerClaims;

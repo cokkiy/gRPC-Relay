@@ -537,6 +537,7 @@ impl AuditLogger {
         });
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn controller_request(
         &self,
         controller_id: &str,
@@ -972,7 +973,7 @@ mod tests {
 
     #[tokio::test]
     async fn event_filter_config_limits_events() {
-        let mut config = crate::config::AuditConfig {
+        let config = crate::config::AuditConfig {
             enabled: true,
             output: "stdout".to_string(),
             file_path: String::new(),

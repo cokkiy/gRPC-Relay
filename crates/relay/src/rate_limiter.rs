@@ -84,7 +84,7 @@ impl RateLimiter {
         const CLEANUP_EVERY: usize = 256;
 
         let count = self.cleanup_counter.fetch_add(1, Ordering::Relaxed) + 1;
-        if count % CLEANUP_EVERY as u64 != 0 {
+        if !count.is_multiple_of(CLEANUP_EVERY as u64) {
             return;
         }
 
@@ -144,7 +144,7 @@ impl ConnectionRateLimiter {
         let mut window = self
             .device_windows
             .entry(device_id.to_string())
-            .or_insert_with(VecDeque::new);
+            .or_default();
 
         Self::prune_and_check(&mut window, self.device_limit, self.device_window)
     }
@@ -152,7 +152,7 @@ impl ConnectionRateLimiter {
     /// Check a global connection attempt. Returns true if allowed.
     pub async fn allow_global(&self) -> bool {
         let mut window = self.global_window_data.lock().await;
-        Self::prune_and_check_inner(&mut *window, self.global_limit, self.global_window)
+        Self::prune_and_check_inner(&mut window, self.global_limit, self.global_window)
     }
 
     fn prune_and_check(window: &mut VecDeque<Instant>, limit: u32, window_dur: Duration) -> bool {

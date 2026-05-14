@@ -226,6 +226,7 @@ pub fn spawn_mqtt_publisher(
     MqttHandles { publisher, runtime }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_mqtt_session(
     cfg: &MqttConfig,
     relay_id: &str,

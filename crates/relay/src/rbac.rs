@@ -125,7 +125,6 @@ mod tests {
 
     #[test]
     fn test_viewer_cannot_execute_control_command() {
-        use crate::config::AuthConfig;
         let mut engine = make_engine();
         engine.method_whitelist = vec!["ExecuteCommand".into()];
         let ctrl = make_ctrl("viewer-1", "viewer", &["proj-a"]);

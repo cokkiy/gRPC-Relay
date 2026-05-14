@@ -34,6 +34,7 @@ pub struct HealthState {
 }
 
 impl HealthState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         version: &'static str,
         security_metrics: SecurityMetrics,
@@ -123,6 +124,7 @@ fn derive_overall_status(components: &HealthComponents) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn serve_health(
     config: HealthConfig,
     version: &'static str,
