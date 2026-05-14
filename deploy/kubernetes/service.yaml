@@ -15,10 +15,6 @@ spec:
       port: 50051
       targetPort: 50051
       protocol: TCP
-    - name: quic
-      port: 50052
-      targetPort: 50052
-      protocol: UDP
     - name: health
       port: 8080
       targetPort: 8080

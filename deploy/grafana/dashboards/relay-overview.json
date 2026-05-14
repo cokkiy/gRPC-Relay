@@ -20,13 +20,14 @@
         "defaults": {
           "color": {"mode": "thresholds"},
           "mappings": [
-            {"options": {"0": {"text": "DOWN"}, "1": {"text": "UP"}}, "type": "value"}
+            {"options": {"0": {"text": "DOWN"}, "1": {"text": "DEGRADED"}, "2": {"text": "UP"}}, "type": "value"}
           ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {"color": "red", "value": null},
-              {"color": "green", "value": 1}
+              {"color": "yellow", "value": 1},
+              {"color": "green", "value": 2}
             ]
           }
         }

@@ -58,7 +58,7 @@ jobs:
         run: cargo test --workspace --lib
 
       - name: cargo test --tests
-        run: cargo test --workspace --test '*'
+        run: cargo test --workspace --tests
 
   coverage:
     name: Coverage
@@ -114,13 +114,17 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Set lowercase image name
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "IMAGE_NAME=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
       - name: Push to GHCR
         if: startsWith(github.ref, 'refs/tags/v')
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+          tags: ${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

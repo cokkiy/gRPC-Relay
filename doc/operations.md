@@ -72,10 +72,10 @@ sudo systemctl stop relay
 sudo ./deploy/bare-metal/uninstall.sh
 ```
 
-### Docker Compose 方式（优雅停止）
+### Docker Compose 方式（停止）
 
 ```bash
-# 优雅停止（SIGTERM，等待 30s 超时后 SIGKILL）
+# 停止 relay 容器
 docker-compose stop relay
 
 # 完全清理
@@ -88,7 +88,7 @@ docker-compose down -v
 ### Kubernetes 方式
 
 ```bash
-# 删除部署（Pod 收到 SIGTERM，有 30s terminationGracePeriodSeconds）
+# 删除部署
 kubectl delete deployment grpc-relay-relay -n relay-system
 
 # 或缩放至 0（保留 Deployment 配置）
@@ -98,13 +98,7 @@ kubectl scale deployment grpc-relay-relay --replicas=0 -n relay-system
 kubectl delete -k deploy/kubernetes/
 ```
 
-**优雅关闭流程**：Relay 收到 SIGTERM 后，依次执行：
-1. 停止接受新连接
-2. 等待正在处理的请求完成（最多 30s）
-3. 关闭设备连接（发送 GOAWAY）
-4. 刷新遥测和日志
-5. 关闭 MQTT 连接
-6. 退出进程
+**当前实现说明**：Relay 进程当前仅监听 `Ctrl+C`（`tokio::signal::ctrl_c()`）触发退出，未实现基于 SIGTERM 的请求排空/连接排空流程。由 systemd / Docker / Kubernetes 发出的 SIGTERM 将按进程默认行为终止。
 
 ---
 
@@ -137,7 +131,7 @@ docker-compose logs -f relay
 
 ```bash
 # 更新镜像
-kubectl set image deployment/grpc-relay-relay relay=ghcr.io/<owner>/gRPC-Relay:v1.1.0 -n relay-system
+kubectl set image deployment/grpc-relay-relay relay=ghcr.io/<owner>/grpc-relay:v1.1.0 -n relay-system
 
 # 监控滚动更新进度
 kubectl rollout status deployment/grpc-relay-relay -n relay-system
@@ -277,7 +271,7 @@ rate(relay_rate_limit_hits_total[5m])
 
 ### Grafana 仪表板
 
-浏览器访问 `http://localhost:3000`（默认用户名/密码: admin/admin），进入 "gRPC-Relay Overview" 仪表板。
+浏览器访问 `http://localhost:3000`，使用你在 `.env` 中设置的 `GRAFANA_ADMIN_PASSWORD` 登录（用户名默认 `admin`），进入 "gRPC-Relay Overview" 仪表板。
 
 ---
 
@@ -291,14 +285,13 @@ curl http://localhost:8080/health
 
 # 2. 检查端口是否监听
 netstat -tuln | grep 50051    # gRPC
-netstat -tuln | grep 50052    # QUIC
 
 # 3. 检查容器/Pod 日志
 docker-compose logs relay | grep -E "ERROR|WARN"
 kubectl logs deployment/grpc-relay-relay -n relay-system | grep -E "ERROR|WARN"
 
 # 4. 检查防火墙规则
-iptables -L -n | grep -E "50051|50052"
+iptables -L -n | grep 50051
 
 # 5. 检查连接日志（审计）
 docker-compose exec relay tail -50 /var/log/relay/audit.log | grep device_connect
@@ -457,14 +450,12 @@ kubectl rollout restart deployment/grpc-relay-relay -n relay-system
 ### Token 撤销
 
 ```bash
-# 通过 gRPC RevokeToken RPC 撤销（需要 admin JWT）
-grpcurl -H "Authorization: Bearer $ADMIN_JWT" \
-  -d '{"token_type": "device", "token": "device-token-to-revoke"}' \
+# 通过 gRPC RevokeToken RPC 撤销（admin_token 在请求体中）
+grpcurl -d '{"controller_id":"ctrl-1","admin_token":"'"$ADMIN_JWT"'","target_type":"DEVICE","target_token_hash_or_prefix":"device-token-prefix","reason":"device decommissioned"}' \
   localhost:50051 relay.v1.RelayService/RevokeToken
 
 # 撤销 Controller JWT
-grpcurl -H "Authorization: Bearer $ADMIN_JWT" \
-  -d '{"token_type": "controller", "token": "eyJ..."}' \
+grpcurl -d '{"controller_id":"ctrl-1","admin_token":"'"$ADMIN_JWT"'","target_type":"CONTROLLER","target_token_hash_or_prefix":"eyJ...","reason":"controller token rotation"}' \
   localhost:50051 relay.v1.RelayService/RevokeToken
 ```
 
@@ -474,7 +465,7 @@ grpcurl -H "Authorization: Bearer $ADMIN_JWT" \
 # K8s: 更新 Secret 中的 jwt-hs256-secret
 kubectl create secret generic grpc-relay-relay-secrets \
   --from-file=jwt-hs256-secret=<(echo -n "new-strong-secret") \
-  --dry-run=client -o yaml | kubectl apply -f -
+  --dry-run=client -o yaml -n relay-system | kubectl apply -f - -n relay-system
 
 # 重启使新密钥生效
 kubectl rollout restart deployment/grpc-relay-relay -n relay-system

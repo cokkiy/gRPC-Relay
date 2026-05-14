@@ -13,14 +13,18 @@ spec:
     - Ingress
   ingress:
     # Allow gRPC from controllers
-    - ports:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: relay-system
+      ports:
         - protocol: TCP
           port: 50051
-    # Allow QUIC from devices
-    - ports:
-        - protocol: UDP
-          port: 50052
     # Allow health/metrics from monitoring (within namespace or labeled pods)
-    - ports:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: relay-system
+      ports:
         - protocol: TCP
           port: 8080

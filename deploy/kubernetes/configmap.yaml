@@ -14,7 +14,7 @@ data:
       max_device_connections: 10000
       heartbeat_interval_seconds: 30
       tls:
-        enabled: true
+        enabled: false
         cert_path: /etc/relay/tls/tls.crt
         key_path: /etc/relay/tls/tls.key
       auth:
@@ -52,7 +52,7 @@ data:
         cpu_threshold_percent: 80.0
         memory_threshold_mb: 12288
       mqtt:
-        enabled: true
+        enabled: false
         broker_address: "mqtt-broker:1883"
         telemetry_interval_seconds: 10
         reconnect_initial_seconds: 1

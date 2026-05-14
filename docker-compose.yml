@@ -3,6 +3,8 @@ services:
     build: .
     image: grpc-relay:latest
     container_name: relay-001
+    env_file:
+      - .env
     ports:
       - "50051:50051"
       - "50052:50052/udp"
@@ -74,7 +76,7 @@ services:
       - grafana-data:/var/lib/grafana
     environment:
       GF_SECURITY_ADMIN_USER: admin
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
     depends_on:
       prometheus:

@@ -54,9 +54,6 @@ spec:
             - name: grpc
               containerPort: 50051
               protocol: TCP
-            - name: quic
-              containerPort: 50052
-              protocol: UDP
             - name: health
               containerPort: 8080
               protocol: TCP

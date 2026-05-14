@@ -20,7 +20,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --pr
     && rustup component add rustfmt clippy
 
 # Copy manifests first for dependency caching
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY crates/relay/Cargo.toml crates/relay/
 COPY crates/relay-proto/Cargo.toml crates/relay-proto/
 COPY crates/device-sdk/Cargo.toml crates/device-sdk/
@@ -33,6 +33,7 @@ RUN mkdir -p crates/relay/src crates/relay-proto/src crates/device-sdk/src crate
     echo '' > crates/relay-proto/src/lib.rs && \
     echo '' > crates/device-sdk/src/lib.rs && \
     echo '' > crates/controller-sdk/src/lib.rs && \
+    cargo generate-lockfile && \
     cargo fetch --locked && \
     rm -rf crates/relay/src crates/relay-proto/src crates/device-sdk/src crates/controller-sdk/src
 
