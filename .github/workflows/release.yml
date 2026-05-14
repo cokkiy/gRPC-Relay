@@ -56,10 +56,26 @@ jobs:
           PY
 
       - name: Publish relay-proto
-        run: cargo publish -p relay-proto
+        run: |
+          cargo publish -p relay-proto
+          relay_proto_version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "relay-proto"))')"
+          echo "RELAY_PROTO_VERSION=$relay_proto_version" >> "$GITHUB_ENV"
 
       - name: Wait for relay-proto index propagation
-        run: sleep 30
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail https://crates.io/api/v1/crates/relay-proto \
+              | python -c 'import json, sys; version = sys.argv[1]; data = json.load(sys.stdin); sys.exit(0 if any(v["num"] == version for v in data["versions"]) else 1)' "$RELAY_PROTO_VERSION"; then
+              echo "relay-proto ${RELAY_PROTO_VERSION} is available on crates.io"
+              exit 0
+            fi
+
+            echo "Waiting for relay-proto ${RELAY_PROTO_VERSION} to appear on crates.io (attempt ${attempt}/30)..."
+            sleep 10
+          done
+
+          echo "Timed out waiting for relay-proto ${RELAY_PROTO_VERSION} to appear on crates.io" >&2
+          exit 1
 
       - name: Publish device-sdk
         run: cargo publish -p device-sdk
