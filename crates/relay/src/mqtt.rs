@@ -223,12 +223,10 @@ pub fn spawn_mqtt_publisher(
         }
     });
 
-    MqttHandles {
-        publisher,
-        runtime,
-    }
+    MqttHandles { publisher, runtime }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_mqtt_session(
     cfg: &MqttConfig,
     relay_id: &str,
@@ -274,7 +272,8 @@ async fn run_mqtt_session(
             let req = pending_requests
                 .pop_front()
                 .expect("pending_requests was checked non-empty before pop_front; logic error");
-            if let Err(e) = publish_device_event(client.clone(), req, relay_address, relay_id).await {
+            if let Err(e) = publish_device_event(client.clone(), req, relay_address, relay_id).await
+            {
                 runtime.decrement_queue_pending();
                 return Err(e);
             }
@@ -566,7 +565,9 @@ pub(crate) fn test_publisher() -> (MqttPublisher, mpsc::Receiver<MqttPublishRequ
 
 #[cfg(test)]
 mod tests {
-    use super::{build_relay_telemetry_payload, online_session_snapshot, parse_host_port, MqttRuntimeState};
+    use super::{
+        build_relay_telemetry_payload, online_session_snapshot, parse_host_port, MqttRuntimeState,
+    };
     use crate::resource_monitor::ResourceMonitor;
     use crate::state::{DeviceSession, RelayState};
     use std::collections::HashMap;

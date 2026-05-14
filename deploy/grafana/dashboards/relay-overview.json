@@ -1,0 +1,339 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 0},
+      "id": 100,
+      "panels": [],
+      "title": "Overview",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"text": "DOWN"}, "1": {"text": "DEGRADED"}, "2": {"text": "UP"}}, "type": "value"}
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "yellow", "value": 1},
+              {"color": "green", "value": 2}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 1},
+      "id": 1,
+      "title": "Health Status",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "relay_health_status{}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "auto"
+      }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 10, "x": 4, "y": 1},
+      "id": 2,
+      "title": "Active Connections",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "relay_active_device_connections{}",
+          "legendFormat": "Devices",
+          "refId": "A"
+        },
+        {
+          "expr": "relay_active_controller_connections{}",
+          "legendFormat": "Controllers",
+          "refId": "B"
+        }
+      ],
+      "options": {
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {"axisPlacement": "auto"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 10, "x": 14, "y": 1},
+      "id": 3,
+      "title": "Active Streams",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "relay_active_streams{}",
+          "legendFormat": "Total Streams",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 9},
+      "id": 200,
+      "panels": [],
+      "title": "Performance",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"axisPlacement": "auto"},
+          "unit": "ms"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 10},
+      "id": 4,
+      "title": "Request Latency (P50/P95/P99)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(relay_request_latency_seconds_bucket[5m]))",
+          "legendFormat": "P50",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(relay_request_latency_seconds_bucket[5m]))",
+          "legendFormat": "P95",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(relay_request_latency_seconds_bucket[5m]))",
+          "legendFormat": "P99",
+          "refId": "C"
+        }
+      ],
+      "options": {
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"axisPlacement": "auto"},
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 10},
+      "id": 5,
+      "title": "Throughput",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(relay_bytes_transferred_total{direction=\"rx\"}[5m])",
+          "legendFormat": "RX",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(relay_bytes_transferred_total{direction=\"tx\"}[5m])",
+          "legendFormat": "TX",
+          "refId": "B"
+        }
+      ],
+      "options": {
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 18},
+      "id": 300,
+      "panels": [],
+      "title": "Errors & Resources",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"axisPlacement": "auto"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 19},
+      "id": 6,
+      "title": "Error Rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(relay_errors_total[5m])",
+          "legendFormat": "Errors/s",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"axisPlacement": "auto"},
+          "max": 100,
+          "min": 0,
+          "unit": "percent"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 19},
+      "id": 7,
+      "title": "CPU Usage",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "relay_cpu_usage_percent{}",
+          "legendFormat": "CPU %",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {"mode": "multi"},
+        "thresholds": [
+          {"color": "green", "value": null},
+          {"color": "yellow", "value": 70},
+          {"color": "red", "value": 90}
+        ]
+      }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"axisPlacement": "auto"},
+          "max": 100,
+          "min": 0,
+          "unit": "percent"
+        }
+      },
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 19},
+      "id": 8,
+      "title": "Memory Usage",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "relay_memory_usage_percent{}",
+          "legendFormat": "Memory %",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {"mode": "multi"},
+        "thresholds": [
+          {"color": "green", "value": null},
+          {"color": "yellow", "value": 80},
+          {"color": "red", "value": 95}
+        ]
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {"h": 1, "w": 24, "x": 0, "y": 27},
+      "id": 400,
+      "panels": [],
+      "title": "MQTT",
+      "type": "row"
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "custom": {"axisPlacement": "auto"},
+          "unit": "short"
+        }
+      },
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 28},
+      "id": 9,
+      "title": "MQTT Publish Rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "relay_mqtt_publish_rate{}",
+          "legendFormat": "Publish/s",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "tooltip": {"mode": "multi"}
+      }
+    },
+    {
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "mappings": [
+            {"options": {"0": {"text": "Disconnected"}, "1": {"text": "Connected"}}, "type": "value"}
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "red", "value": null},
+              {"color": "green", "value": 1}
+            ]
+          }
+        }
+      },
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 28},
+      "id": 10,
+      "title": "MQTT Connection",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "relay_mqtt_connected{}",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"]
+        },
+        "textMode": "auto"
+      }
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "tags": ["grpc-relay", "relay"],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "gRPC-Relay Overview",
+  "uid": "grpc-relay-overview",
+  "version": 1
+}

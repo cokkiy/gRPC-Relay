@@ -1,15 +1,8 @@
 use clap::Parser;
 use relay::{
-    alerting::AlertingRuntime,
-    config::AppConfig,
-    grpc_service::RelayGrpcService,
-    logging,
-    mqtt,
-    observability,
-    relay_metrics::RelayMetrics,
-    resource_monitor::ResourceMonitor,
-    state::RelayState,
-    Result,
+    alerting::AlertingRuntime, config::AppConfig, grpc_service::RelayGrpcService, logging, mqtt,
+    observability, relay_metrics::RelayMetrics, resource_monitor::ResourceMonitor,
+    state::RelayState, Result,
 };
 use tonic::transport::{Identity, Server, ServerTlsConfig};
 use tracing::info;
@@ -36,10 +29,8 @@ async fn run() -> Result<()> {
     let relay_metrics = RelayMetrics::new()
         .map_err(|err| relay::AppError::Validation(format!("metrics init failed: {err}")))?;
     security_metrics.attach_relay_metrics(relay_metrics.clone());
-    let tracer_provider = logging::init(
-        &config.observability.logging,
-        &config.observability.tracing,
-    );
+    let tracer_provider =
+        logging::init(&config.observability.logging, &config.observability.tracing);
 
     info!(
         relay_id = %config.relay.id,
@@ -70,10 +61,8 @@ async fn run() -> Result<()> {
         true,
     ));
 
-    let audit_logger = relay::audit::AuditLogger::new(
-        &config.observability.audit,
-        config.relay.id.clone(),
-    );
+    let audit_logger =
+        relay::audit::AuditLogger::new(&config.observability.audit, config.relay.id.clone());
 
     let mqtt_publisher = if config.relay.mqtt.enabled {
         let handles = mqtt::spawn_mqtt_publisher(

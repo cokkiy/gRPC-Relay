@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: relay-network-policy
+  namespace: relay-system
+  labels:
+    app.kubernetes.io/part-of: grpc-relay
+spec:
+  podSelector:
+    matchLabels:
+      app: relay
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow gRPC from controllers
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: relay-system
+      ports:
+        - protocol: TCP
+          port: 50051
+    # Allow health/metrics from monitoring (within namespace or labeled pods)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: relay-system
+      ports:
+        - protocol: TCP
+          port: 8080

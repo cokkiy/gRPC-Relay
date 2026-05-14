@@ -33,7 +33,8 @@ impl AlertingRuntime {
 
         let config = self.config.clone();
         Some(tokio::spawn(async move {
-            let interval = std::time::Duration::from_secs(config.evaluation_interval_seconds.max(1));
+            let interval =
+                std::time::Duration::from_secs(config.evaluation_interval_seconds.max(1));
             let mut ticker = tokio::time::interval(interval);
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut last_sent: HashMap<String, std::time::Instant> = HashMap::new();

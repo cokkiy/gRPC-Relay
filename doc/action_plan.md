@@ -1174,15 +1174,269 @@ cargo llvm-cov --workspace --fail-under-lines 80
 ---
 
 ### 10) 部署与发布
-**目标**：让系统可部署、可启动、可回滚。
+**状态**：完成（含 release 自动构建发布）
 
-**交付物**
-- Docker 镜像构建
-- docker-compose 示例
-- Kubernetes manifests
-- 配置样例
-- 运维手册草案
-- 发布检查清单
+**目标**：让系统可部署、可启动、可回滚，具备生产级 CI/CD 和监控基础设施。
+
+> 部署形态包括 Docker、Kubernetes、以及 Linux 裸机（systemd）三条路径。
+
+---
+
+#### 10.1 Docker 镜像构建优化
+
+**状态**：完成
+
+**目标**：生产级 Docker 镜像，分层缓存、安全加固、可复现构建。
+
+**交付物**:
+
+1. **`rust-toolchain.toml`** — 固定 Rust 工具链版本（1.75），替代 Dockerfile 中的硬编码
+2. **`Dockerfile`** 优化:
+   - Layer caching：先复制 Cargo.toml/Cargo.lock，`cargo fetch`，再复制源码编译
+   - `--locked` flag 保证可复现构建
+   - 非 root 用户运行（`USER relay`）
+   - `HEALTHCHECK` 指令内置于镜像
+   - OCI labels（`org.opencontainers.image.*`）
+3. **`.dockerignore`** — 排除 target/、.git/、doc/、.github/ 等不必要文件
+
+**验收**:
+- `docker build -t grpc-relay:latest .` 成功，镜像 < 200 MB
+- 容器以 relay 用户（非 root）运行
+- OCI labels 可查询: `docker inspect grpc-relay:latest | jq '.[0].Config.Labels'`
+
+---
+
+#### 10.2 docker-compose 完善
+
+**目标**：本地一键启动完整开发/测试环境，包括监控栈。
+
+**交付物**:
+
+1. **`docker-compose.yml`** 增强 — 新增 3 个服务:
+   - `prometheus` — 挂载 `deploy/prometheus/prometheus.yml`，抓取 relay:8080
+   - `grafana` — 自动加载 datasource + dashboard provision
+   - `jaeger` — OTLP tracing 收集器（可选）
+   - relay 服务 `depends_on` mqtt，统一 `relay-network` 网络
+
+2. **`deploy/prometheus/prometheus.yml`** — Prometheus 抓取配置
+   - `relay` job: 抓取 `/metrics` endpoint at relay:8080
+   - 15s 抓取间隔，30 天数据保留
+
+3. **`deploy/grafana/datasources/prometheus.yml`** — Grafana 自动数据源配置
+
+4. **`deploy/grafana/dashboards/relay-overview.json`** — 预置仪表板
+   - Overview: 健康状态、活跃连接数、活跃流数
+   - Performance: P50/P95/P99 延迟、吞吐量
+   - Errors & Resources: 错误率、CPU、内存
+   - MQTT: 发布速率、连接状态
+
+**验收**:
+- `docker-compose up -d` 全部服务启动
+- `curl localhost:9090/targets` relay UP
+- `curl localhost:3000` Grafana 可访问，仪表板自动加载
+
+---
+
+#### 10.3 裸机部署方案（systemd）
+
+**目标**：提供不依赖容器编排的 Linux 主机部署路径，适用于边缘节点、单机房或已有主机运维体系的环境。
+
+**交付物**:
+
+1. **`deploy/bare-metal/relay.service`** — `systemd` unit
+   - 非 root 用户 `relay`
+   - `EnvironmentFile=/etc/grpc-relay/relay.env`
+   - `Restart=on-failure`
+   - 基础硬化：`NoNewPrivileges`、`ProtectSystem=strict`
+
+2. **`deploy/bare-metal/relay.env.example`** — 裸机环境变量模板
+   - `RELAY_ID`, `RUST_LOG`
+   - `RELAY__MQTT__BROKER_ADDRESS`
+   - `RELAY__AUTH__JWT__HS256_SECRET`
+   - `RELAY__TLS__*`, `RELAY__OBSERVABILITY__TRACING__*`
+
+3. **`deploy/bare-metal/install.sh` / `upgrade.sh` / `uninstall.sh`** — 裸机生命周期脚本
+   - 安装：创建用户/目录、安装 binary/config/unit、启用服务
+   - 升级：替换 binary，可选覆盖 config，重启服务
+   - 卸载：停用服务，按需保留或清理宿主机数据
+
+4. **`deploy/bare-metal/README.md`** — 安装目录约定与脚本使用方式
+   - `install.sh`
+   - `upgrade.sh`
+   - `uninstall.sh`
+
+**验收**:
+- 在 Linux 主机执行手册步骤后，`systemctl status relay` 正常
+- `curl http://127.0.0.1:8080/health` 返回健康状态
+
+---
+
+#### 10.4 Kubernetes Manifests 完善
+
+**目标**：从单文件拆分为专业多文件布局，补齐 HPA/PDB/NetworkPolicy，提高安全性和可维护性。
+
+**交付物** — 拆分 `deploy/kubernetes/relay.yaml` 为 10 个独立资源文件：
+
+| 文件 | 内容 | 关键变更 |
+|---|---|---|
+| `namespace.yaml` | Namespace `relay-system` | 新增 `app.kubernetes.io/part-of` label |
+| `serviceaccount.yaml` | ServiceAccount `relay` | 供 Deployment 显式绑定，避免依赖默认 ServiceAccount |
+| `configmap.yaml` | ConfigMap `relay-config` | 与 `config/relay.yaml` 同步，包含 stream/rate_limiting/audit/alerting 配置 |
+| `secret.yaml` | Secret `relay-secrets` | TLS 证书 + JWT 密钥模板（`stringData` 占位） |
+| `deployment.yaml` | Deployment | 新增 `securityContext`（非 root、readOnlyRootFS），resources（2CPU/4Gi req → 8CPU/16Gi limit），Pod anti-affinity，startupProbe |
+| `service.yaml` | Service | 类型 `ClusterIP`，3 端口（gRPC/QUIC/health） |
+| `hpa.yaml` | HorizontalPodAutoscaler | CPU 70% + Memory 80% 触发，min 1 / max 10 |
+| `pdb.yaml` | PodDisruptionBudget | `maxUnavailable: 1` |
+| `networkpolicy.yaml` | NetworkPolicy | 仅放行 50051/TCP, 50052/UDP, 8080/TCP 入站 |
+| `kustomization.yaml` | Kustomize 入口 | 统一管理所有资源，`namePrefix: grpc-relay-` |
+
+**安全加固**:
+- `securityContext.runAsNonRoot: true`, `readOnlyRootFilesystem: true`
+- `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`
+- JWT secret 通过 `secretKeyRef` 注入，不写入 ConfigMap
+- NetworkPolicy 限制入站端口
+
+**验收**:
+- `kubectl apply -k deploy/kubernetes/` 全部资源 reconciliation 成功
+- Pod Ready，startup/liveness/readiness 探针通过
+- HPA 评估正常：`kubectl get hpa -n relay-system`
+
+---
+
+#### 10.5 CI/CD Pipeline (GitHub Actions)
+
+**目标**：每次 PR 自动执行检查、测试、覆盖率；tag 推送自动构建并发布 Docker 镜像。
+
+**交付物** — `.github/workflows/ci.yml`（5 个 job） + `.github/workflows/release.yml`（1 个 release workflow）：
+
+| Job | 触发条件 | 内容 |
+|---|---|---|
+| `check` | 每次 push/PR | `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo check` |
+| `test` | 每次 push/PR | `cargo test --workspace --lib`, `cargo test --workspace --test '*'`（含 mosquitto service container） |
+| `coverage` | 每次 push/PR | `cargo llvm-cov --workspace --fail-under-lines 80` |
+| `build` | PR / tag push | `docker build`（GHA cache），tag push 时推送至 ghcr.io |
+| `bench` | `workflow_dispatch` | `cargo bench --no-run`（编译检查） |
+
+`.github/workflows/release.yml`：
+
+| Workflow | 触发条件 | 内容 |
+|---|---|---|
+| `release` | GitHub Release published | 自动构建并推送 release 镜像到 ghcr.io（含 `latest`、tag、sha 标签） |
+
+**关键配置**:
+- `actions-rust-lang/setup-rust-toolchain@v1` 自动安装 `rust-toolchain.toml` 指定版本
+- `Swatinem/rust-cache@v2` 缓存 `target/`（基于 Cargo.lock hash）
+- Docker buildx + GHA cache 加速镜像构建
+- Coverage job 使用 `taiki-e/install-action@cargo-llvm-cov` faster installation
+
+**验收**:
+- CI 全部 job 绿灯通过
+- Docker 镜像构建成功（PR 触发 build，不 push）
+- Tag push 时镜像推送到 ghcr.io
+
+---
+
+#### 10.6 配置管理完善
+
+**目标**：文档化环境变量，确保配置一致性。
+
+**交付物**:
+
+1. **`.env.example`** — 文档化所有关键环境变量:
+   - `RELAY_ID`, `RUST_LOG`
+   - `RELAY__MQTT__BROKER_ADDRESS`
+   - `RELAY__AUTH__JWT__HS256_SECRET`
+   - `RELAY__TLS__*`, `RELAY__OBSERVABILITY__TRACING__*`
+
+2. **`config/relay.yaml`** — 已与需求文档 §9.3 对齐，包含重连/带宽/CPU/内存阈值
+
+3. **`deploy/kubernetes/configmap.yaml`** — 与 `config/relay.yaml` 结构一致
+
+**验收**:
+- 新开发者可从 `.env.example` 了解需配置的环境变量
+- `config/relay.yaml` 与 K8s ConfigMap 结构、字段语义一致
+
+---
+
+#### 10.7 运维手册（`doc/operations.md`）
+
+**交付物** — 完整的运维操作手册，对齐需求文档 §9.5：
+
+1. **启动服务** — Docker / K8s 命令，含健康检查验证
+2. **停止服务** — Docker / K8s / 裸机优雅关闭流程（SIGTERM → 30s 排空 → 退出）
+3. **滚动更新** — `kubectl rollout` / `docker-compose up --no-deps` + 回滚命令
+4. **扩容/缩容** — `kubectl scale` / HPA 调整
+5. **日志查看** — `kubectl logs` / `docker-compose logs` + 审计日志路径
+6. **指标查看** — PromQL 关键查询（连接数、P99 延迟、错误率、MQTT 等）
+7. **故障排查** — 4 个高频问题诊断步骤（设备无法连接、高延迟、MQTT 断连、内存泄漏）
+8. **备份和恢复** — ConfigMap/Secret 备份 + Redis 备份占位
+9. **安全加固** — 证书轮换步骤、Token 撤销命令、JWT 密钥更新
+10. **告警响应** — 10 类告警的 Warning/Critical 响应流程 + 抑制规则
+
+**验收**:
+- 按手册步骤可在干净环境完成一次部署、更新和基本故障排查
+
+---
+
+#### 10.8 发布检查清单
+
+| 类别       | 检查项                               | 阻塞发布? |
+| ---------- | ------------------------------------ | --------- |
+| **功能**   | 所有 P0 功能通过集成测试             | 是        |
+| **功能**   | gRPC 三个 RPC 正常响应               | 是        |
+| **性能**   | P99 延迟 < 20ms（基准测试）          | 是        |
+| **性能**   | 10K 连接压测通过，CPU < 80%          | 否        |
+| **安全**   | TLS 1.3 全网有效                     | 是        |
+| **安全**   | 安全测试 8 项全部通过                | 是        |
+| **稳定性** | 24h 稳定性测试无内存/连接泄漏        | 否        |
+| **观测性** | /health、/metrics、审计日志可用      | 是        |
+| **部署**   | Docker 镜像构建并推送到 registry     | 是        |
+| **部署**   | K8s manifests 在测试集群验证通过     | 是        |
+| **部署**   | 裸机 `systemd` 方案按手册可启动      | 是        |
+| **文档**   | `doc/operations.md` 手册可执行       | 是        |
+| **文档**   | `CHANGELOG.md` 记录版本变更          | 是        |
+
+---
+
+#### 10.9 Helm Chart（P2 后续项）
+
+首版不纳入。后续可通过 Helm Chart 替代 plain K8s manifests，支持模板化配置、多环境覆盖、一键安装/升级。
+
+---
+
+#### 交付物清单（Section 10）
+
+| 文件                                      | 说明                  | 状态 |
+| ----------------------------------------- | --------------------- | ---- |
+| `rust-toolchain.toml`                     | Rust 工具链固定       | ✅    |
+| `Dockerfile`                              | 生产级多阶段构建      | ✅    |
+| `.dockerignore`                           | 构建上下文优化        | ✅    |
+| `docker-compose.yml`                      | 本地全栈环境          | ✅    |
+| `deploy/bare-metal/relay.service`        | 裸机 systemd unit     | ✅    |
+| `deploy/bare-metal/relay.env.example`    | 裸机环境模板          | ✅    |
+| `deploy/bare-metal/install.sh`           | 裸机安装脚本          | ✅    |
+| `deploy/bare-metal/upgrade.sh`           | 裸机升级脚本          | ✅    |
+| `deploy/bare-metal/uninstall.sh`         | 裸机卸载脚本          | ✅    |
+| `deploy/bare-metal/README.md`            | 裸机部署手册          | ✅    |
+| `.env.example`                            | 环境变量文档          | ✅    |
+| `deploy/kubernetes/namespace.yaml`        | Namespace             | ✅    |
+| `deploy/kubernetes/serviceaccount.yaml`   | ServiceAccount        | ✅    |
+| `deploy/kubernetes/configmap.yaml`        | ConfigMap             | ✅    |
+| `deploy/kubernetes/secret.yaml`           | Secret 模板           | ✅    |
+| `deploy/kubernetes/deployment.yaml`       | Deployment            | ✅    |
+| `deploy/kubernetes/service.yaml`          | Service               | ✅    |
+| `deploy/kubernetes/hpa.yaml`              | HPA                   | ✅    |
+| `deploy/kubernetes/pdb.yaml`              | PodDisruptionBudget   | ✅    |
+| `deploy/kubernetes/networkpolicy.yaml`    | NetworkPolicy         | ✅    |
+| `deploy/kubernetes/kustomization.yaml`    | Kustomize entry       | ✅    |
+| `deploy/prometheus/prometheus.yml`        | Prometheus 抓取配置   | ✅    |
+| `deploy/grafana/datasources/prometheus.yml` | Grafana 数据源      | ✅    |
+| `deploy/grafana/dashboards/dashboards.yml`  | Dashboard provision | ✅    |
+| `deploy/grafana/dashboards/relay-overview.json` | 预置仪表板       | ✅    |
+| `.github/workflows/ci.yml`                | CI/CD pipeline        | ✅    |
+| `.github/workflows/release.yml`           | Release 自动发布      | ✅    |
+| `CHANGELOG.md`                            | 版本变更记录          | ✅    |
+| `doc/operations.md`                       | 运维操作手册          | ✅    |
 
 **依赖**
 - 核心服务与观测性基本完成

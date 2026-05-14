@@ -4,8 +4,8 @@ use crate::config::AppConfig;
 use crate::idempotency::IdempotencyCache;
 use crate::mqtt::MqttPublisher;
 use crate::rate_limiter::{BandwidthTracker, ConnectionRateLimiter, RateLimiter};
-use crate::relay_metrics::RelayMetrics;
 use crate::rbac::{AuthorizationError, RbacPolicyEngine};
+use crate::relay_metrics::RelayMetrics;
 use crate::resource_monitor::ResourceMonitor;
 use crate::security_metrics::SecurityMetrics;
 use crate::session::SessionRegistry;
@@ -108,6 +108,7 @@ impl RelayGrpcService {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_device_connect_stream<S>(
         state: Arc<RelayState>,
         _session_registry: SessionRegistry,
@@ -458,6 +459,7 @@ impl RelayGrpcService {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn run_connect_to_device_stream<S>(
         router: StreamRouter,
         cache: IdempotencyCache,
@@ -546,19 +548,19 @@ impl RelayGrpcService {
                             token_prefix = %AuthService::token_prefix(&msg.token),
                             reason = "controller_token_ok"
                         );
-                    if let Some(ref audit) = audit_logger {
-                        audit.auth_success("controller", &msg.controller_id, "");
-                        if !controller_connected {
-                            audit.controller_connect(&msg.controller_id, "", None);
+                        if let Some(ref audit) = audit_logger {
+                            audit.auth_success("controller", &msg.controller_id, "");
+                            if !controller_connected {
+                                audit.controller_connect(&msg.controller_id, "", None);
+                            }
                         }
+                        if !controller_connected {
+                            state.increment_controller_connections();
+                            controller_connected = true;
+                        }
+                        p
                     }
-                    if !controller_connected {
-                        state.increment_controller_connections();
-                        controller_connected = true;
-                    }
-                    p
-                }
-                Err(_) => {
+                    Err(_) => {
                         security_metrics.record_auth_failure();
                         tracing::info!(
                             event = "auth_failure",
@@ -645,12 +647,7 @@ impl RelayGrpcService {
                         token_prefix = %AuthService::token_prefix(&msg.token)
                     );
                     if let Some(ref audit) = audit_logger {
-                        audit.rate_limit(
-                            "controller",
-                            &msg.controller_id,
-                            "request_rate",
-                            "",
-                        );
+                        audit.rate_limit("controller", &msg.controller_id, "request_rate", "");
                     }
                     relay_metrics
                         .requests_total
@@ -794,12 +791,7 @@ impl RelayGrpcService {
                         reason = "bandwidth_exceeded"
                     );
                     if let Some(ref audit) = audit_logger {
-                        audit.rate_limit(
-                            "controller",
-                            &msg.controller_id,
-                            "bandwidth",
-                            "",
-                        );
+                        audit.rate_limit("controller", &msg.controller_id, "bandwidth", "");
                     }
                     relay_metrics
                         .requests_total
@@ -976,6 +968,7 @@ impl RelayGrpcService {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod tests {
     use super::*;
     use crate::auth::ControllerClaims;
@@ -1450,7 +1443,8 @@ mod tests {
     #[tokio::test]
     async fn clean_device_disconnect_publishes_graceful_shutdown() {
         let (service, _state, mut mqtt_rx) = service_with_mqtt(test_config());
-        let (device_tx, _device_stream, _connection_id) = start_device_loop(&service, "dev-1").await;
+        let (device_tx, _device_stream, _connection_id) =
+            start_device_loop(&service, "dev-1").await;
 
         let online = mqtt_rx.recv().await.unwrap();
         match online {
@@ -1465,9 +1459,7 @@ mod tests {
         let offline = mqtt_rx.recv().await.unwrap();
         match offline {
             mqtt::MqttPublishRequest::DeviceOffline {
-                device_id,
-                reason,
-                ..
+                device_id, reason, ..
             } => {
                 assert_eq!(device_id, "dev-1");
                 assert_eq!(reason, "graceful_shutdown");
@@ -2176,7 +2168,13 @@ impl RelayService for RelayGrpcService {
         if req.controller_id.trim().is_empty() || req.token.trim().is_empty() {
             self.security_metrics.record_auth_failure();
             if let Some(ref audit) = self.audit_logger {
-                audit.auth_failure("controller", &req.controller_id, "missing_credentials", "", None);
+                audit.auth_failure(
+                    "controller",
+                    &req.controller_id,
+                    "missing_credentials",
+                    "",
+                    None,
+                );
             }
             return Err(Status::unauthenticated("missing controller_id or token"));
         }
@@ -2381,13 +2379,7 @@ impl RelayService for RelayGrpcService {
                 reason = "revoke_requires_admin"
             );
             if let Some(ref audit) = self.audit_logger {
-                audit.authorization_denied(
-                    &req.controller_id,
-                    "",
-                    "",
-                    "revoke_requires_admin",
-                    "",
-                );
+                audit.authorization_denied(&req.controller_id, "", "", "revoke_requires_admin", "");
             }
             return Err(Status::permission_denied("admin role required"));
         }

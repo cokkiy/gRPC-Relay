@@ -85,7 +85,10 @@ mod tests {
 
         // Different attempts should always stay within valid bounds
         let v3 = b.next_sleep_seconds(6);
-        assert!((1..=60).contains(&v3), "sleep should remain bounded, got {v3}");
+        assert!(
+            (1..=60).contains(&v3),
+            "sleep should remain bounded, got {v3}"
+        );
     }
 
     #[test]

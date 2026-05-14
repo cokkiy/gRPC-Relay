@@ -180,7 +180,7 @@ impl ControllerConnectSession {
 fn map_device_response_to_sequence_result(device_resp: DeviceResponse) -> SequenceResult {
     let err_code = ErrorCode::try_from(device_resp.error).ok();
 
-    let result = match err_code {
+    match err_code {
         Some(ErrorCode::Ok) => Ok(Bytes::from(device_resp.encrypted_payload)),
         Some(ErrorCode::DeviceOffline) => Err(ControllerSdkError::DeviceOffline),
         Some(ErrorCode::Unauthorized) => Err(ControllerSdkError::Unauthorized),
@@ -188,7 +188,5 @@ fn map_device_response_to_sequence_result(device_resp: DeviceResponse) -> Sequen
         Some(ErrorCode::RateLimited) => Err(ControllerSdkError::RateLimited),
         Some(ErrorCode::InternalError) => Err(ControllerSdkError::InternalError),
         None => Err(ControllerSdkError::StreamClosed),
-    };
-
-    result
+    }
 }
