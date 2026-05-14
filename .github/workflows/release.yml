@@ -63,19 +63,40 @@ jobs:
 
       - name: Wait for relay-proto index propagation
         run: |
-          for attempt in $(seq 1 30); do
-            if curl --silent --fail https://crates.io/api/v1/crates/relay-proto \
-              | python -c 'import json, sys; version = sys.argv[1]; data = json.load(sys.stdin); sys.exit(0 if any(v["num"] == version for v in data["versions"]) else 1)' "$RELAY_PROTO_VERSION"; then
-              echo "relay-proto ${RELAY_PROTO_VERSION} is available on crates.io"
-              exit 0
-            fi
+          python <<'PYEOF'
+          import json, sys, time, urllib.request, urllib.error, os
 
-            echo "Waiting for relay-proto ${RELAY_PROTO_VERSION} to appear on crates.io (attempt ${attempt}/30)..."
-            sleep 10
-          done
+          version = os.environ["RELAY_PROTO_VERSION"]
+          url = "https://crates.io/api/v1/crates/relay-proto"
 
-          echo "Timed out waiting for relay-proto ${RELAY_PROTO_VERSION} to appear on crates.io" >&2
-          exit 1
+          for attempt in range(1, 31):
+              print(f"Checking crates.io for relay-proto {version} (attempt {attempt}/30)...")
+              try:
+                  with urllib.request.urlopen(url, timeout=10) as resp:
+                      if resp.status != 200:
+                          print(f"HTTP {resp.status}, retrying...")
+                          time.sleep(10)
+                          continue
+                      data = json.load(resp)
+              except (urllib.error.URLError, json.JSONDecodeError) as e:
+                  print(f"Request/JSON error: {e}, retrying...")
+                  time.sleep(10)
+                  continue
+              except Exception as e:
+                  print(f"Unexpected error: {e}, retrying...")
+                  time.sleep(10)
+                  continue
+
+              if any(v["num"] == version for v in data.get("versions", [])):
+                  print(f"relay-proto {version} is available on crates.io")
+                  sys.exit(0)
+
+              print(f"Version {version} not yet found, retrying...")
+              time.sleep(10)
+
+          print(f"Timed out waiting for relay-proto {version}", file=sys.stderr)
+          sys.exit(1)
+          PYEOF
 
       - name: Publish device-sdk
         run: cargo publish -p device-sdk
