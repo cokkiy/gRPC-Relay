@@ -1,6 +1,6 @@
 use crate::config::{LoggingConfig, TracingConfig};
-use opentelemetry::KeyValue;
 use opentelemetry::trace::TracerProvider as _;
+use opentelemetry::KeyValue;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::trace::{Config, Sampler, TracerProvider};
 use opentelemetry_sdk::Resource;
@@ -11,10 +11,7 @@ use tracing_subscriber::{
     EnvFilter,
 };
 
-pub fn init(
-    config: &LoggingConfig,
-    tracing_config: &TracingConfig,
-) -> Option<TracerProvider> {
+pub fn init(config: &LoggingConfig, tracing_config: &TracingConfig) -> Option<TracerProvider> {
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level));
 
@@ -24,9 +21,7 @@ pub fn init(
         fmt::layer().boxed()
     };
 
-    let registry = tracing_subscriber::registry()
-        .with(filter)
-        .with(fmt_layer);
+    let registry = tracing_subscriber::registry().with(filter).with(fmt_layer);
 
     if tracing_config.enabled {
         match build_tracer_provider(tracing_config) {

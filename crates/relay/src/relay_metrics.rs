@@ -112,7 +112,10 @@ impl RelayMetrics {
             &["method_name", "status"],
         )?;
         let requests_total = IntCounterVec::new(
-            Opts::new("relay_requests_total", "Total relay requests by method and status"),
+            Opts::new(
+                "relay_requests_total",
+                "Total relay requests by method and status",
+            ),
             &["method_name", "status"],
         )?;
         let bytes_transferred_total = IntCounterVec::new(

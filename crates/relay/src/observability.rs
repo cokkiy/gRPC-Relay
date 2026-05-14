@@ -12,8 +12,8 @@ use tracing::info;
 
 use tokio::net::TcpListener;
 
-use crate::relay_metrics::RelayMetrics;
 use crate::mqtt::MqttRuntimeState;
+use crate::relay_metrics::RelayMetrics;
 use crate::resource_monitor::ResourceMonitor;
 use crate::security_metrics::{SecurityMetrics, SecurityMetricsSnapshot};
 use crate::state::RelayState;
@@ -123,7 +123,7 @@ fn derive_overall_status(components: &HealthComponents) -> &'static str {
     }
 }
 
-    pub async fn serve_health(
+pub async fn serve_health(
     config: HealthConfig,
     version: &'static str,
     security_metrics: SecurityMetrics,
@@ -192,9 +192,7 @@ async fn live() -> impl IntoResponse {
     StatusCode::OK
 }
 
-async fn ready(
-    axum::extract::State(state): axum::extract::State<HealthState>,
-) -> Response {
+async fn ready(axum::extract::State(state): axum::extract::State<HealthState>) -> Response {
     let response = build_health_response(&state);
     if response.status == "unhealthy" {
         (StatusCode::SERVICE_UNAVAILABLE, Json(response)).into_response()
@@ -203,9 +201,7 @@ async fn ready(
     }
 }
 
-async fn startup(
-    axum::extract::State(state): axum::extract::State<HealthState>,
-) -> Response {
+async fn startup(axum::extract::State(state): axum::extract::State<HealthState>) -> Response {
     if state.startup_complete {
         (StatusCode::OK, Json(build_health_response(&state))).into_response()
     } else {
@@ -328,13 +324,18 @@ fn refresh_runtime_metrics_with_response(state: &HealthState, response: &HealthR
         .metrics
         .memory_usage_percent
         .set(response.metrics.memory_usage_percent);
-    state.metrics.memory_used_bytes.set(
-        (state.resource_monitor.used_memory_mb() * 1024 * 1024) as f64,
-    );
+    state
+        .metrics
+        .memory_used_bytes
+        .set((state.resource_monitor.used_memory_mb() * 1024 * 1024) as f64);
     state
         .metrics
         .mqtt_connected
-        .set(if state.mqtt_runtime.is_connected() { 1 } else { 0 });
+        .set(if state.mqtt_runtime.is_connected() {
+            1
+        } else {
+            0
+        });
     state
         .metrics
         .mqtt_reconnect_count
@@ -352,10 +353,26 @@ fn refresh_runtime_metrics_with_response(state: &HealthState, response: &HealthR
         "degraded" => 1,
         _ => 0,
     });
-    set_component_metric(&state.metrics, "grpc_server", response.components.grpc_server.status);
-    set_component_metric(&state.metrics, "quic_listener", response.components.quic_listener.status);
-    set_component_metric(&state.metrics, "mqtt_client", response.components.mqtt_client.status);
-    set_component_metric(&state.metrics, "auth_service", response.components.auth_service.status);
+    set_component_metric(
+        &state.metrics,
+        "grpc_server",
+        response.components.grpc_server.status,
+    );
+    set_component_metric(
+        &state.metrics,
+        "quic_listener",
+        response.components.quic_listener.status,
+    );
+    set_component_metric(
+        &state.metrics,
+        "mqtt_client",
+        response.components.mqtt_client.status,
+    );
+    set_component_metric(
+        &state.metrics,
+        "auth_service",
+        response.components.auth_service.status,
+    );
     set_component_metric(
         &state.metrics,
         "metrics_collector",
