@@ -9,6 +9,40 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
+  publish-sdk-crates:
+    name: Publish SDK Crates To crates.io
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-publish
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Publish relay-proto
+        run: cargo publish -p relay-proto --locked
+
+      - name: Wait for relay-proto index propagation
+        run: sleep 30
+
+      - name: Publish device-sdk
+        run: cargo publish -p device-sdk --locked
+
+      - name: Publish controller-sdk
+        run: cargo publish -p controller-sdk --locked
+
   docker-release:
     name: Build And Publish Release Image
     runs-on: ubuntu-latest
