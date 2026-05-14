@@ -1,0 +1,296 @@
+name: Create Release
+
+# Manually-triggered workflow that creates a git tag and GitHub release.
+# This is the second step of the hybrid release process:
+#
+#   1. Developer runs `./scripts/prepare-release.sh <version>` locally
+#   2. Developer reviews changes and commits the version bump
+#   3. Developer pushes the commit to the default branch
+#   4. Developer triggers THIS workflow with the same version
+#
+# This workflow will:
+#   - Verify Cargo.toml version matches the provided version
+#   - Verify the workspace builds and tests pass
+#   - Create git tag `v<version>`
+#   - Create a GitHub release with auto-generated notes
+#   - The "Release" workflow (release.yml) then takes over to publish
+#     crates.io and the Docker image.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0 or 1.0.0-rc1)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+      draft:
+        description: 'Create as draft release'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  validate:
+    name: Validate Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.validate.outputs.version }}
+      tag: ${{ steps.validate.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate version format
+        id: validate
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          # Validate SemVer format
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+            echo "::error::Invalid version format: '$VERSION'"
+            echo "::error::Expected: MAJOR.MINOR.PATCH[-PRERELEASE]"
+            echo "::error::Example: 1.0.0 or 1.0.0-rc1"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "::notice::Validated version: $VERSION (tag: v$VERSION)"
+
+      - name: Verify Cargo.toml version matches
+        run: |
+          VERSION="${{ inputs.version }}"
+
+          CARGO_VERSION=$(python -c '
+          import tomllib
+          with open("Cargo.toml", "rb") as f:
+              data = tomllib.load(f)
+          print(data["workspace"]["package"]["version"])
+          ')
+
+          if [ "$CARGO_VERSION" != "$VERSION" ]; then
+            echo "::error::Version mismatch!"
+            echo "::error::  Cargo.toml: $CARGO_VERSION"
+            echo "::error::  Workflow input: $VERSION"
+            echo "::error::"
+            echo "::error::Run './scripts/prepare-release.sh $VERSION' locally first,"
+            echo "::error::then commit and push the change before triggering this workflow."
+            exit 1
+          fi
+
+          echo "::notice::Cargo.toml version matches: $VERSION"
+
+      - name: Check tag does not exist
+        run: |
+          TAG="v${{ inputs.version }}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "::error::Tag '$TAG' already exists"
+            exit 1
+          fi
+
+          # Also check remote
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
+            echo "::error::Tag '$TAG' already exists on remote"
+            exit 1
+          fi
+
+          echo "::notice::Tag '$TAG' is available"
+
+  test:
+    name: Pre-Release Tests
+    runs-on: ubuntu-latest
+    needs: validate
+    services:
+      mosquitto:
+        image: eclipse-mosquitto:2
+        ports:
+          - 1883:1883
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: create-release
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --lib --tests
+
+      - name: cargo build --release
+        run: cargo build --workspace --release
+
+      - name: Verify binary version
+        run: |
+          BINARY_VERSION=$(./target/release/relay --version | awk '{print $2}')
+          EXPECTED_VERSION="${{ inputs.version }}"
+
+          if [ "$BINARY_VERSION" != "$EXPECTED_VERSION" ]; then
+            echo "::error::Binary version mismatch!"
+            echo "::error::  Binary: $BINARY_VERSION"
+            echo "::error::  Expected: $EXPECTED_VERSION"
+            exit 1
+          fi
+
+          echo "::notice::Binary version verified: $BINARY_VERSION"
+
+  release:
+    name: Create Tag and Release
+    runs-on: ubuntu-latest
+    needs: [validate, test]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Need full history for release notes
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Create and push tag
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+          echo "::notice::Created and pushed tag: $TAG"
+
+      - name: Generate release notes
+        id: notes
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          # Find the previous tag (if any) for changelog generation
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 "$TAG^" 2>/dev/null || echo "")
+
+          if [ -n "$PREVIOUS_TAG" ]; then
+            echo "::notice::Generating changelog from $PREVIOUS_TAG to $TAG"
+            RANGE="$PREVIOUS_TAG..$TAG"
+          else
+            echo "::notice::No previous tag found, including all commits"
+            RANGE="$TAG"
+          fi
+
+          # Write release notes to a file (multi-line output)
+          {
+            echo "## What's Changed"
+            echo ""
+
+            # Group commits by type (conventional commits)
+            FEATURES=$(git log --pretty=format:"- %s (%h)" "$RANGE" --grep="^feat" || true)
+            FIXES=$(git log --pretty=format:"- %s (%h)" "$RANGE" --grep="^fix" || true)
+            DOCS=$(git log --pretty=format:"- %s (%h)" "$RANGE" --grep="^docs" || true)
+            CHORES=$(git log --pretty=format:"- %s (%h)" "$RANGE" --grep="^chore" || true)
+            OTHERS=$(git log --pretty=format:"- %s (%h)" "$RANGE" \
+              --invert-grep --grep="^feat" --grep="^fix" --grep="^docs" --grep="^chore" || true)
+
+            if [ -n "$FEATURES" ]; then
+              echo "### ✨ Features"
+              echo ""
+              echo "$FEATURES"
+              echo ""
+            fi
+
+            if [ -n "$FIXES" ]; then
+              echo "### 🐛 Bug Fixes"
+              echo ""
+              echo "$FIXES"
+              echo ""
+            fi
+
+            if [ -n "$DOCS" ]; then
+              echo "### 📚 Documentation"
+              echo ""
+              echo "$DOCS"
+              echo ""
+            fi
+
+            if [ -n "$CHORES" ]; then
+              echo "### 🔧 Chores"
+              echo ""
+              echo "$CHORES"
+              echo ""
+            fi
+
+            if [ -n "$OTHERS" ]; then
+              echo "### 📦 Other Changes"
+              echo ""
+              echo "$OTHERS"
+              echo ""
+            fi
+
+            echo "### 📦 Published Artifacts"
+            echo ""
+            echo "- **Crates** (crates.io):"
+            echo "  - \`relay-proto\` v${{ inputs.version }}"
+            echo "  - \`device-sdk\` v${{ inputs.version }}"
+            echo "  - \`controller-sdk\` v${{ inputs.version }}"
+            echo "- **Docker Image** (GHCR):"
+            echo "  - \`ghcr.io/${{ github.repository }}:${{ needs.validate.outputs.tag }}\`"
+            echo ""
+
+            if [ -n "$PREVIOUS_TAG" ]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/$PREVIOUS_TAG...$TAG"
+            fi
+          } > release_notes.md
+
+          echo "Generated release notes:"
+          echo "------------------------"
+          cat release_notes.md
+          echo "------------------------"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: ${{ needs.validate.outputs.tag }}
+          body_path: release_notes.md
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: false  # We have our own
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Summary
+        run: |
+          {
+            echo "# 🎉 Release Created"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Version | \`${{ inputs.version }}\` |"
+            echo "| Tag | \`${{ needs.validate.outputs.tag }}\` |"
+            echo "| Prerelease | ${{ inputs.prerelease }} |"
+            echo "| Draft | ${{ inputs.draft }} |"
+            echo ""
+            echo "## Next Steps"
+            echo ""
+            echo "The \`Release\` workflow has been automatically triggered and will:"
+            echo "- Publish \`relay-proto\` to crates.io"
+            echo "- Publish \`device-sdk\` to crates.io"
+            echo "- Publish \`controller-sdk\` to crates.io"
+            echo "- Build and push Docker image to GHCR"
+            echo ""
+            echo "Track progress: [Actions](https://github.com/${{ github.repository }}/actions)"
+          } >> "$GITHUB_STEP_SUMMARY"
