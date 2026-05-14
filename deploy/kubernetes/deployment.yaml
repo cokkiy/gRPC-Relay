@@ -1,0 +1,130 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: relay
+  namespace: relay-system
+  labels:
+    app: relay
+    app.kubernetes.io/part-of: grpc-relay
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: relay
+  template:
+    metadata:
+      labels:
+        app: relay
+        app.kubernetes.io/part-of: grpc-relay
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 30
+      serviceAccountName: relay
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - relay
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: relay
+          image: grpc-relay:latest
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/relay/relay.yaml"]
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          ports:
+            - name: grpc
+              containerPort: 50051
+              protocol: TCP
+            - name: quic
+              containerPort: 50052
+              protocol: UDP
+            - name: health
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: RELAY_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RUST_LOG
+              value: info
+            - name: RELAY__AUTH__JWT__HS256_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: relay-secrets
+                  key: jwt-hs256-secret
+          volumeMounts:
+            - name: config
+              mountPath: /etc/relay/relay.yaml
+              subPath: relay.yaml
+              readOnly: true
+            - name: tls
+              mountPath: /etc/relay/tls
+              readOnly: true
+            - name: logs
+              mountPath: /var/log/relay
+          resources:
+            requests:
+              cpu: "2"
+              memory: "4Gi"
+            limits:
+              cpu: "8"
+              memory: "16Gi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 2
+          startupProbe:
+            httpGet:
+              path: /health/startup
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+      volumes:
+        - name: config
+          configMap:
+            name: relay-config
+        - name: tls
+          secret:
+            secretName: relay-secrets
+            items:
+              - key: tls.crt
+                path: tls.crt
+              - key: tls.key
+                path: tls.key
+        - name: logs
+          emptyDir:
+            sizeLimit: 500Mi
