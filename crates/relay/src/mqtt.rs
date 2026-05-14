@@ -213,7 +213,7 @@ pub fn spawn_mqtt_publisher(
                     // exp_pow = 2^attempt (capped)
                     let exp_pow = checked_pow2(attempt.min(20));
                     // backoff = min(max, initial * exp_pow)
-                    let backoff_secs = min(max as u64, (initial as u64).saturating_mul(exp_pow));
+                    let backoff_secs = min(max, initial.saturating_mul(exp_pow));
                     attempt = attempt.saturating_add(1);
 
                     runtime_for_task.set_connected(false);
