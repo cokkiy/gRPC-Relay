@@ -9,6 +9,80 @@ env:
   CARGO_NET_GIT_FETCH_WITH_CLI: "true"
 
 jobs:
+  publish-sdk-crates:
+    name: Publish SDK Crates To crates.io
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-publish
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Verify release tag matches workspace version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import tomllib
+
+          with open("Cargo.toml", "rb") as f:
+              cargo_toml = tomllib.load(f)
+
+          version = cargo_toml["workspace"]["package"]["version"]
+          expected_tag = f"v{version}"
+          actual_tag = os.environ["RELEASE_TAG"]
+
+          if actual_tag != expected_tag:
+              print(
+                  f"Release tag mismatch: expected '{expected_tag}' from workspace.package.version, got '{actual_tag}'.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          PY
+
+      - name: Publish relay-proto
+        run: |
+          cargo publish -p relay-proto
+          relay_proto_version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "relay-proto"))')"
+          echo "RELAY_PROTO_VERSION=$relay_proto_version" >> "$GITHUB_ENV"
+
+      - name: Wait for relay-proto index propagation
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail https://crates.io/api/v1/crates/relay-proto \
+              | python -c 'import json, sys; version = sys.argv[1]; data = json.load(sys.stdin); sys.exit(0 if any(v["num"] == version for v in data["versions"]) else 1)' "$RELAY_PROTO_VERSION"; then
+              echo "relay-proto ${RELAY_PROTO_VERSION} is available on crates.io"
+              exit 0
+            fi
+
+            echo "Waiting for relay-proto ${RELAY_PROTO_VERSION} to appear on crates.io (attempt ${attempt}/30)..."
+            sleep 10
+          done
+
+          echo "Timed out waiting for relay-proto ${RELAY_PROTO_VERSION} to appear on crates.io" >&2
+          exit 1
+
+      - name: Publish device-sdk
+        run: cargo publish -p device-sdk
+
+      - name: Publish controller-sdk
+        run: cargo publish -p controller-sdk
+
   docker-release:
     name: Build And Publish Release Image
     runs-on: ubuntu-latest
