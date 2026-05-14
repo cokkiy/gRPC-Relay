@@ -1,0 +1,24 @@
+[Unit]
+Description=gRPC-Relay service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=relay
+Group=relay
+WorkingDirectory=/var/lib/grpc-relay
+EnvironmentFile=/etc/grpc-relay/relay.env
+ExecStart=/usr/local/bin/relay --config /etc/grpc-relay/relay.yaml
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65535
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/grpc-relay /var/lib/grpc-relay
+
+[Install]
+WantedBy=multi-user.target
