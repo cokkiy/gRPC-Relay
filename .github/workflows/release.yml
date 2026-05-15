@@ -203,7 +203,20 @@ jobs:
       - name: Resolve tag name
         id: tag
         run: |
-          TAG="${{ github.event.release.tag_name || inputs.tag_name }}"
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.ref_name }}"
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag_name }}"
+          else
+            echo "::error::Unsupported event: ${{ github.event_name }}"
+            exit 1
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "::error::Resolved tag name is empty"
+            exit 1
+          fi
+
           echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v5
