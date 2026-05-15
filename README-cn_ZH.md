@@ -254,7 +254,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 
 ## 部署与运维
 
-完整的部署文档见 [`deploy/README.md`](deploy/README.md)，涵盖 Docker Compose、裸机部署、Kubernetes、Prometheus、Grafana 和 Mosquitto。手动构建说明见 [`deploy/BUILD.md`](deploy/BUILD.md)（二进制文件和 Docker 镜像）。
+完整的部署文档见 [`deploy/README.md`](deploy/README.md)，涵盖 Docker Compose、裸机部署、Kubernetes 以及 Prometheus、Grafana 等配套组件。MQTT Broker 通过 Docker Compose 方案集成提供。手动构建说明见 [`deploy/BUILD.md`](deploy/BUILD.md)（二进制文件和 Docker 镜像）。
 
 预构建的 Docker 镜像在每次发版时发布到 `ghcr.io/cokkiy/grpc-relay` — 无需本地 Rust 工具链即可运行 relay。
 
