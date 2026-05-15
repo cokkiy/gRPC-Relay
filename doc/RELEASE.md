@@ -302,7 +302,7 @@ The script auto-generates branch names:
 ```
 Aborted by user. Reverting changes...
 ```
-The script automatically reverts and returns to the original branch.
+The script automatically reverts files and checks out the detected default branch.
 
 ### After PR Created, Before Merge (Step 2)
 ```bash
@@ -322,10 +322,15 @@ git checkout -- Cargo.toml Cargo.lock
 
 ### After PR Merged, Before Workflow Triggered (Step 3)
 ```bash
-# Revert the version bump on master (requires force-push permission,
-# or revert with a new PR)
+# Create a revert branch from master
+git checkout -b revert-release-v1.0.0 origin/master
+
+# Revert the version-bump commit
 git revert <merge-commit-hash>
-git push origin master
+
+# Push and open a revert PR (master is protected)
+git push -u origin revert-release-v1.0.0
+gh pr create --title "revert: release bump v1.0.0" --body "Rollback release bump" --base master
 
 # Delete the chore branch if still present
 git push origin --delete chore/release-v1.0.0

@@ -48,6 +48,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Ensure run is from default branch
+        run: |
+          if [ "${{ github.ref_name }}" != "${{ github.event.repository.default_branch }}" ]; then
+            echo "::error::This workflow must run from the default branch."
+            echo "::error::Selected ref: ${{ github.ref_name }}"
+            echo "::error::Default branch: ${{ github.event.repository.default_branch }}"
+            exit 1
+          fi
+
+          echo "::notice::Running from default branch: ${{ github.ref_name }}"
+
       - name: Validate version format
         id: validate
         run: |

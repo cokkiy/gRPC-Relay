@@ -66,15 +66,15 @@ jobs:
           PUBLISHED="$(cargo search "$CRATE" --limit 1 2>/dev/null | head -1)"
           if echo "$PUBLISHED" | grep -qF "\"$VERSION\""; then
             echo "::notice::$CRATE $VERSION is already on crates.io, skipping publish"
-            echo "SKIP_SDK_PUBLISH=true" >> "$GITHUB_ENV"
+            echo "RELAY_PROTO_ALREADY_PUBLISHED=true" >> "$GITHUB_ENV"
             exit 0
           fi
 
           cargo publish -p relay-proto
-          echo "SKIP_SDK_PUBLISH=false" >> "$GITHUB_ENV"
+          echo "RELAY_PROTO_ALREADY_PUBLISHED=false" >> "$GITHUB_ENV"
 
       - name: Wait for relay-proto index propagation
-        if: env.SKIP_SDK_PUBLISH != 'true'
+        if: env.RELAY_PROTO_ALREADY_PUBLISHED != 'true'
         run: |
           python <<'PYEOF'
           import json, sys, time, urllib.request, urllib.error, os
@@ -112,7 +112,6 @@ jobs:
           PYEOF
 
       - name: Publish device-sdk
-        if: env.SKIP_SDK_PUBLISH != 'true'
         run: |
           CRATE="device-sdk"
           VERSION="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "device-sdk"))')"
@@ -126,7 +125,6 @@ jobs:
           cargo publish -p device-sdk
 
       - name: Publish controller-sdk
-        if: env.SKIP_SDK_PUBLISH != 'true'
         run: |
           CRATE="controller-sdk"
           VERSION="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "controller-sdk"))')"

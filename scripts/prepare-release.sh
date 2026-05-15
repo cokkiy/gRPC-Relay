@@ -79,8 +79,8 @@ if [ -z "$REMOTE" ]; then
     die "No 'origin' remote configured"
 fi
 
-# Check for uncommitted changes
-if ! git diff-index --quiet HEAD --; then
+# Check for uncommitted/unstaged/untracked changes
+if [ -n "$(git status --porcelain)" ]; then
     warn "You have uncommitted changes:"
     git status --short
     echo ""
@@ -160,7 +160,9 @@ fi
 info "Creating branch '$BRANCH' from $DEFAULT_BRANCH..."
 
 # Fetch latest to avoid stale base
-git fetch origin "$DEFAULT_BRANCH" 2>/dev/null || true
+if ! git fetch origin "$DEFAULT_BRANCH"; then
+    die "Failed to fetch origin/$DEFAULT_BRANCH. Check network/auth and try again."
+fi
 
 # Check if branch already exists
 if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
@@ -189,7 +191,7 @@ success "Created branch '$BRANCH'"
 info "Updating Cargo.toml..."
 
 TEMP_FILE=$(mktemp)
-trap "rm -f $TEMP_FILE" EXIT
+trap 'rm -f "$TEMP_FILE"' EXIT
 
 awk -v new_version="$VERSION" '
     /^\[workspace\.package\]/ { in_workspace_package = 1 }
@@ -259,7 +261,7 @@ Trigger the **Create Release** workflow:
 \`\`\`
 gh workflow run create-release.yml -f version=$VERSION
 \`\`\`
-Or go to: ${BLUE}Actions → Create Release${NC} → Run workflow
+Or go to: Actions → Create Release → Run workflow
 
 The workflow will:
 - Verify \`Cargo.toml\` version matches \`$VERSION\`
