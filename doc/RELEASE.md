@@ -1,42 +1,50 @@
 # Release Process
 
 This document describes the **hybrid release process** for gRPC-Relay, combining local control with automated publishing.
+The flow works **with a protected master branch** — the version bump goes through a pull request instead of
+a direct push.
 
 ## Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Hybrid Release Flow                          │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                       Hybrid Release Flow                                 │
+│                   (protected-branch compatible)                            │
+└──────────────────────────────────────────────────────────────────────────┘
 
-   LOCAL                          GITHUB
-  ┌──────────────────┐         ┌──────────────────────────────────┐
-  │ 1. prepare-      │         │ 3. create-release.yml            │
-  │    release.sh    │         │    • Verify version              │
-  │    • Update      │  ─────► │    • Run tests                   │
-  │      Cargo.toml  │         │    • Create tag                  │
-  │    • Run check   │         │    • Create release              │
-  │    • Show diff   │         └──────────┬───────────────────────┘
-  └────────┬─────────┘                    │
-           │                              │ triggers
-           ▼                              ▼
-  ┌──────────────────┐         ┌──────────────────────────────────┐
-  │ 2. Commit & push │         │ 4. release.yml                   │
-  │    • Review      │         │    • Publish relay-proto         │
-  │    • Commit      │         │    • Publish device-sdk          │
-  │    • Push        │         │    • Publish controller-sdk     │
-  └──────────────────┘         │    • Build & push Docker image   │
-                               └──────────────────────────────────┘
+   LOCAL                              GITHUB
+  ┌──────────────────────┐         ┌──────────────────────────────────────┐
+  │ 1. prepare-          │         │ 3. Code review + PR merge            │
+  │    release.sh        │         │    • Review version bump PR          │
+  │    • Create branch   │  ─────► │    • Merge to master                 │
+  │    • Update Cargo    │         └──────────────┬───────────────────────┘
+  │      .toml           │                        │
+  │    • cargo check     │                        ▼
+  │    • Commit          │         ┌──────────────────────────────────────┐
+  │    • Push branch     │         │ 4. create-release.yml (manual)       │
+  │    • Open PR         │  ─────► │    • Verify version                 │
+  └──────────────────────┘         │    • Run tests                      │
+                                   │    • Create tag                     │
+   LOCAL (PR review)               │    • Create GitHub release          │
+  ┌──────────────────────┐         └──────────────┬───────────────────────┘
+  │ 2. Merge PR          │                        │ triggers
+  │    via GitHub UI      │  ─────►                ▼
+  └──────────────────────┘         ┌──────────────────────────────────────┐
+                                   │ 5. release.yml (auto)                │
+                                   │    • Publish relay-proto             │
+                                   │    • Publish device-sdk              │
+                                   │    • Publish controller-sdk          │
+                                   │    • Build & push Docker image       │
+                                   └──────────────────────────────────────┘
 ```
 
-## Why Hybrid?
+## Why Hybrid + PR?
 
-This approach combines the best of both worlds:
-
-- **Local Control** — Review changes before committing, work offline
-- **Automated Publishing** — Consistent, reliable, no manual mistakes
-- **Safety** — Multiple checkpoints prevent accidental releases
-- **Audit Trail** — Both git history and GitHub Actions logs
+- **Branch Protection** — master is protected; the version bump goes through a PR that CI validates
+- **Local Control** — review the diff locally before a single line touches the remote
+- **Automated Publishing** — once the PR is merged, a single workflow trigger handles tags, releases, crates.io, and Docker
+- **Safety** — version mismatch between `Cargo.toml` and workflow input fails fast; no direct push to master
+- **Audit Trail** — PR review history + git history + Actions logs all tied to the same version
 
 ## Prerequisites
 
@@ -45,16 +53,27 @@ This approach combines the best of both worlds:
 1. **Local tools**:
    - `bash` (already on macOS/Linux)
    - `git`
+   - `gh` (GitHub CLI) — install from https://cli.github.com/
    - `rust` toolchain (`rustup`)
-   - Optional: `gh` (GitHub CLI) for triggering workflows from terminal
 
-2. **GitHub secrets** (configured by repo admin):
+2. **gh authentication**:
+   ```bash
+   gh auth login
+   ```
+
+3. **GitHub secrets** (configured by repo admin):
    - `CARGO_REGISTRY_TOKEN` — For publishing to crates.io
    - `GITHUB_TOKEN` — Auto-provided by GitHub
 
-3. **Permissions**:
+4. **Permissions**:
    - Push access to the repository
+   - Ability to create pull requests
    - Ability to trigger GitHub Actions workflows
+
+5. **Branch protection** (already configured):
+   - Direct push to `master` is blocked
+   - PRs require CI checks to pass before merge
+   - Tags are **not** protected (GitHub Actions can push them)
 
 ## Release Steps
 
@@ -77,66 +96,79 @@ Run the preparation script with the target version:
 ```
 
 The script will:
-- ✅ Validate the version format (SemVer)
-- ✅ Check for uncommitted changes
-- ✅ Verify you're on `master`/`main` branch
-- ✅ Confirm the tag doesn't already exist
-- ✅ Update `Cargo.toml` workspace version
-- ✅ Run `cargo check` to verify it builds
-- ✅ Update `Cargo.lock`
-- ✅ Show you the diff for review
+- Validate the version format (SemVer)
+- Check for uncommitted changes
+- Detect the default branch
+- Confirm the tag doesn't already exist
+- Create a branch `chore/release-v<version>`
+- Update `Cargo.toml` workspace version
+- Run `cargo check` to verify the workspace builds
+- Update `Cargo.lock`
+- Show the diff for review
+- Commit the changes on the branch
+- Push the branch to origin
+- Open a pull request targeting the default branch
 
 **Sample output:**
 ```
 ℹ Running pre-flight checks...
+ℹ Default branch: master
 ℹ Current version: 1.0.0-alpha
 ℹ New version:     1.0.0
 
 This will:
-  1. Update Cargo.toml version: 1.0.0-alpha → 1.0.0
-  2. Run cargo check to verify the workspace builds
-  3. Show you the diff for review
+  1. Create branch:            chore/release-v1.0.0
+  2. Update Cargo.toml version: 1.0.0-alpha → 1.0.0
+  3. Run cargo check to verify the workspace builds
+  4. Commit the changes on the branch
+  5. Push the branch to origin
+  6. Open a pull request targeting master
 
-It will NOT:
-  • Commit the changes (you do that manually)
-  • Create the tag (GitHub workflow does that)
-  • Push anything
+After PR merge:
+  • Trigger the 'Create Release' GitHub workflow with version=1.0.0
+  • The workflow creates tag v1.0.0 and publishes artifacts
 
 Proceed? [y/N] y
 
+ℹ Creating branch 'chore/release-v1.0.0' from master...
+✓ Created branch 'chore/release-v1.0.0'
 ℹ Updating Cargo.toml...
 ✓ Updated Cargo.toml
 ℹ Updating Cargo.lock...
 ✓ Cargo.lock updated
 
-ℹ Changes to be committed:
+ℹ Changes to commit:
+ Cargo.toml | 2 +-
+ Cargo.lock | 2 +-
+ 2 files changed
 
-diff --git a/Cargo.toml b/Cargo.toml
--version = "1.0.0-alpha"
-+version = "1.0.0"
+Commit these changes? [y/N] y
+✓ Committed
+ℹ Pushing branch 'chore/release-v1.0.0'...
+✓ Pushed
+ℹ Creating pull request...
+✓ Pull request created: https://github.com/cokkiy/gRPC-Relay/pull/18
 
 ✓ Release preparation complete!
 ```
 
-### Step 2: Commit and Push (Local)
+### Step 2: Review and Merge the PR
 
-Review the changes, then commit and push:
+1. CI will run automatically on the PR (format, clippy, tests, build)
+2. Review the version bump diff
+3. Once all checks pass, **merge the PR** (via GitHub UI or CLI)
 
 ```bash
-# Review the diff one more time
-git diff Cargo.toml Cargo.lock
+# Merge via CLI (if you have permission)
+gh pr merge --squash --delete-branch
 
-# Commit
-git add Cargo.toml Cargo.lock
-git commit -m "chore: bump version to 1.0.0"
-
-# Push to remote
-git push origin master
+# Or open in browser
+gh pr view --web
 ```
 
-### Step 3: Trigger the Release Workflow (GitHub)
+### Step 3: Trigger the Release Workflow
 
-You have two options to trigger the release:
+**Wait until the PR is merged to master**, then trigger:
 
 #### Option A — GitHub Web UI
 
@@ -144,8 +176,8 @@ You have two options to trigger the release:
 2. Click **Create Release** workflow on the left sidebar
 3. Click **Run workflow** dropdown (top right)
 4. Fill in the form:
-   - **Branch**: `master` (or your release branch)
-   - **Version**: `1.0.0` (without the `v` prefix)
+   - **Branch**: `master` (the default branch)
+   - **Version**: `1.0.0` (without the `v` prefix, must match Cargo.toml)
    - **Mark as pre-release**: Check if RC/beta/alpha
    - **Create as draft**: Check if you want to review before publishing
 5. Click **Run workflow**
@@ -180,21 +212,21 @@ gh run list --workflow=create-release.yml
 ```
 
 The **Create Release** workflow will:
-1. ✅ Validate version format
-2. ✅ Verify `Cargo.toml` version matches input
-3. ✅ Run formatting, linting, and tests
-4. ✅ Build release binary
-5. ✅ Verify `relay --version` matches
-6. ✅ Create git tag `v1.0.0`
-7. ✅ Create GitHub release with auto-generated notes
+1. Validate version format
+2. Verify `Cargo.toml` version matches input
+3. Run formatting, linting, and tests
+4. Build release binary
+5. Verify `relay --version` matches
+6. Create git tag `v1.0.0`
+7. Create GitHub release with auto-generated notes
 
 Once the release is created, the **Release** workflow automatically triggers and:
-1. ✅ Publishes `relay-proto` to crates.io
-2. ✅ Waits for crates.io index propagation
-3. ✅ Publishes `device-sdk` to crates.io
-4. ✅ Publishes `controller-sdk` to crates.io
-5. ✅ Builds Docker image
-6. ✅ Pushes to GitHub Container Registry (GHCR)
+1. Publishes `relay-proto` to crates.io
+2. Waits for crates.io index propagation
+3. Publishes `device-sdk` to crates.io
+4. Publishes `controller-sdk` to crates.io
+5. Builds Docker image
+6. Pushes to GitHub Container Registry (GHCR)
 
 ### Step 5: Verify the Release
 
@@ -240,6 +272,16 @@ Examples:
 | Breaking change | MAJOR | `1.0.0` → `2.0.0` |
 | Pre-release testing | PRERELEASE | `1.0.0` → `1.0.0-rc1` |
 
+### Branch Naming
+
+The script auto-generates branch names:
+
+| Version | Branch |
+|---------|--------|
+| `1.0.0` | `chore/release-v1.0.0` |
+| `1.0.0-rc1` | `chore/release-v1.0.0-rc1` |
+| `1.0.1` | `chore/release-v1.0.1` |
+
 ## Pre-Release vs Stable
 
 ### Pre-Release (alpha, beta, rc)
@@ -256,22 +298,40 @@ Examples:
 
 ## Rollback Procedures
 
-### If Something Goes Wrong
+### During Script Execution (Step 1)
+```
+Aborted by user. Reverting changes...
+```
+The script automatically reverts and returns to the original branch.
 
-#### Before Pushing (Step 1-2)
+### After PR Created, Before Merge (Step 2)
 ```bash
-# Revert local changes
+# Close the PR
+gh pr close <pr-number>
+
+# Delete the remote branch
+git push origin --delete chore/release-v1.0.0
+
+# Delete the local branch
+git branch -D chore/release-v1.0.0
+
+# Revert local Cargo.toml if still dirty
+git checkout master
 git checkout -- Cargo.toml Cargo.lock
 ```
 
-#### After Pushing, Before Workflow (Step 2-3)
+### After PR Merged, Before Workflow Triggered (Step 3)
 ```bash
-# Revert the version bump commit
-git revert HEAD
+# Revert the version bump on master (requires force-push permission,
+# or revert with a new PR)
+git revert <merge-commit-hash>
 git push origin master
+
+# Delete the chore branch if still present
+git push origin --delete chore/release-v1.0.0
 ```
 
-#### After Tag Created, Before Crates Published
+### After Tag Created, Before Crates Published
 ```bash
 # Delete the tag
 git tag -d v1.0.0
@@ -280,12 +340,10 @@ git push origin :refs/tags/v1.0.0
 # Delete the GitHub release
 gh release delete v1.0.0 --yes
 
-# Revert the version bump
-git revert <commit-hash>
-git push origin master
+# Revert the version bump (new PR or direct revert)
 ```
 
-#### After Crates Published (⚠️ Limited Options)
+### After Crates Published (⚠️ Limited Options)
 
 **crates.io does NOT allow deleting versions.** You can only:
 
@@ -305,18 +363,55 @@ git push origin master
 
 ## Troubleshooting
 
-### "Version mismatch" Error
+### "gh CLI not found" Error
 
-**Cause**: The version in `Cargo.toml` doesn't match the workflow input.
+**Cause**: GitHub CLI is not installed.
 
 **Solution**:
 ```bash
-# Make sure you ran the script and committed:
-./scripts/prepare-release.sh 1.0.0
-git add Cargo.toml Cargo.lock
-git commit -m "chore: bump version to 1.0.0"
-git push
-# Then trigger the workflow with version=1.0.0
+# macOS
+brew install gh
+
+# Linux
+# See: https://github.com/cli/cli/blob/trunk/docs/install_linux.md
+
+# Authenticate
+gh auth login
+```
+
+### "gh not authenticated" Error
+
+**Cause**: You haven't logged in to the GitHub CLI.
+
+**Solution**:
+```bash
+gh auth login
+# Follow the prompts (HTTPS + browser is easiest)
+```
+
+### "Branch already exists" Error
+
+**Cause**: A previous release attempt left the branch behind.
+
+**Solution**: The script will ask if you want to delete and recreate. Answer `y`.
+Or manually:
+```bash
+git branch -D chore/release-v1.0.0
+git push origin --delete chore/release-v1.0.0
+```
+
+### "Version mismatch" Error (in workflow)
+
+**Cause**: The version in `Cargo.toml` doesn't match the workflow input.
+
+**Solution**: Did you merge the PR before triggering the workflow?
+```bash
+# Check what version is actually on master
+git fetch origin master
+git show origin/master:Cargo.toml | grep '^version = '
+
+# If the PR hasn't been merged yet, merge it first.
+# If it has, use the exact version from Cargo.toml as the workflow input.
 ```
 
 ### "Tag already exists" Error
@@ -338,7 +433,7 @@ git push origin :refs/tags/v1.0.0
 **Common causes**:
 1. **Token expired**: Renew `CARGO_REGISTRY_TOKEN` in repo secrets
 2. **Version already published**: Bump to next patch version
-3. **Dependency not yet on crates.io**: Wait and retry (script handles this for relay-proto)
+3. **Dependency not yet on crates.io**: Wait and retry (the workflow handles this for relay-proto)
 
 ### Binary Version Mismatch
 
@@ -349,30 +444,39 @@ git push origin :refs/tags/v1.0.0
 #[command(version = env!("CARGO_PKG_VERSION"))]
 ```
 
+### Master is Protected — Can the Workflow Still Push Tags?
+
+**Yes.** Branch protection rules apply to branches, not tags.
+The `create-release.yml` workflow only pushes a **tag** (`v1.0.0`), not commits to master.
+Tags are unprotected by default in GitHub. If you later protect tags, grant the
+`GITHUB_TOKEN` (or a PAT) permission via the repo's tag protection rules.
+
 ## Release Checklist
 
 Use this checklist for each release:
 
 ### Pre-Release
 - [ ] All planned features merged to `master`
-- [ ] All tests passing on `master`
+- [ ] All tests passing on `master` (CI green)
 - [ ] Documentation updated
 - [ ] `CHANGELOG.md` updated (if maintained)
 - [ ] Decided on version number (SemVer)
 
 ### Release Process
-- [ ] Run `./scripts/prepare-release.sh <version>`
-- [ ] Review the diff
-- [ ] Commit and push the version bump
-- [ ] Trigger **Create Release** workflow
-- [ ] Wait for workflow to complete successfully
+- [ ] Run `./scripts/prepare-release.sh <version>` locally
+- [ ] Review the generated PR description
+- [ ] CI passes on the PR (fmt, clippy, tests, build)
+- [ ] Merge the PR to master
+- [ ] Delete the release branch (auto if squash-merge)
+- [ ] Trigger **Create Release** workflow with the same version
+- [ ] Wait for **Create Release** workflow to complete
 - [ ] Verify **Release** workflow also completes
 
 ### Post-Release
 - [ ] Verify GitHub release page looks correct
 - [ ] Verify crates published to crates.io
 - [ ] Verify Docker image on GHCR
-- [ ] Test installation: `cargo install ...` (if applicable)
+- [ ] Test installation via `cargo install ...` (if applicable)
 - [ ] Announce the release (Slack, Discord, blog, etc.)
 - [ ] Update documentation site (if applicable)
 
@@ -381,15 +485,13 @@ Use this checklist for each release:
 ### First Release (v1.0.0)
 
 ```bash
-# 1. Prepare
+# 1. Prepare (creates branch, commits, pushes, opens PR)
 ./scripts/prepare-release.sh 1.0.0
 
-# 2. Commit
-git add Cargo.toml Cargo.lock
-git commit -m "chore: bump version to 1.0.0"
-git push origin master
+# 2. Review and merge the PR
+gh pr view --web
 
-# 3. Trigger workflow
+# 3. After merge, trigger release
 gh workflow run create-release.yml -f version=1.0.0
 
 # 4. Watch
@@ -402,10 +504,8 @@ gh run watch
 # 1. Prepare
 ./scripts/prepare-release.sh 1.0.0-rc1
 
-# 2. Commit
-git add Cargo.toml Cargo.lock
-git commit -m "chore: bump version to 1.0.0-rc1"
-git push origin master
+# 2. Merge PR (via GitHub UI or CLI)
+gh pr merge --squash --delete-branch
 
 # 3. Trigger as pre-release
 gh workflow run create-release.yml \
@@ -416,40 +516,51 @@ gh workflow run create-release.yml \
 ### Patch Release
 
 ```bash
-# 1. Cherry-pick or merge the fix
-git cherry-pick <commit-hash>
+# 1. Ensure the fix is on master (via a separate feature PR)
 
-# 2. Prepare
+# 2. Prepare the version bump
 ./scripts/prepare-release.sh 1.0.1
 
-# 3. Commit and push
-git add Cargo.toml Cargo.lock
-git commit -m "chore: bump version to 1.0.1"
-git push origin master
+# 3. Merge PR
+gh pr merge --squash --delete-branch
 
-# 4. Trigger
+# 4. Trigger release
 gh workflow run create-release.yml -f version=1.0.1
 ```
 
 ## FAQ
 
-**Q: Can I skip the local script and just bump the version in Cargo.toml manually?**
-A: Yes, but the script provides validation and safety checks. The workflow will still verify the version matches.
+**Q: Why can't I push directly to master?**
+A: Branch protection is enabled on master to prevent accidental changes. The release
+script creates a PR so CI validates the version bump before it lands.
 
-**Q: What if I want to release without publishing to crates.io?**
-A: Modify the `release.yml` workflow to add a `skip-publish` input, or disable the workflow temporarily.
+**Q: Can I skip the script and create the PR manually?**
+A: Yes. Create a branch, bump the version in `Cargo.toml`, run `cargo check`, commit,
+push, and open a PR. The script just automates these steps with validation.
 
-**Q: Can I release from a branch other than master?**
-A: Yes, but the script will warn you. Make sure your release branch has all necessary changes.
+**Q: What happens if I trigger the workflow before merging the PR?**
+A: The workflow will fail with "Version mismatch" because `Cargo.toml` on master
+still has the old version. Merge the PR first, then trigger.
+
+**Q: Can I release from a branch other than the default?**
+A: The script always branches from the default branch. If you need to release from
+another branch, do it manually — but this is uncommon.
 
 **Q: How do I add release notes manually?**
-A: Use the `draft: true` option, then edit the release on GitHub before publishing.
+A: Use the `draft: true` option when triggering `create-release.yml`, then edit the
+release notes on GitHub before publishing.
 
 **Q: What if crates.io is down?**
-A: The workflow will fail. Retry after crates.io recovers. The git tag and GitHub release will remain.
+A: The `release.yml` workflow will fail at the publish step. Re-run it once crates.io
+recovers. The git tag and GitHub release already exist and are fine.
 
 **Q: Can I release multiple versions in a day?**
 A: Yes, but be careful with crates.io rate limits. Wait a few minutes between releases.
+
+**Q: What if another feature PR is open while I do a release PR?**
+A: The release PR is just a version bump — it won't conflict with feature work
+unless both touch `Cargo.toml`. Best practice: do the release PR last, after
+all feature PRs for that version are merged.
 
 ---
 
