@@ -1,6 +1,6 @@
 services:
   relay:
-    image: ghcr.io/cokkiy/grpc-relay:latest
+    image: ghcr.io/cokkiy/grpc-relay:${RELAY_VERSION:-latest}
     # For local development, comment the image line above and uncomment build below:
     # build: .
     container_name: relay-001
