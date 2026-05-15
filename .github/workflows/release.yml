@@ -77,8 +77,8 @@ jobs:
           echo "RELAY_PROTO_VERSION=$VERSION" >> "$GITHUB_ENV"
 
           # Check if this version already exists on crates.io
-          PUBLISHED="$(cargo search "$CRATE" --limit 1 2>/dev/null | head -1)"
-          if echo "$PUBLISHED" | grep -qF "\"$VERSION\""; then
+          PUBLISHED="$(cargo search "$CRATE" --registry crates-io --limit 1 2>/dev/null | head -1)"
+          if echo "$PUBLISHED" | grep -q "^$CRATE = \"$VERSION\""; then
             echo "::notice::$CRATE $VERSION is already on crates.io, skipping publish"
             echo "RELAY_PROTO_ALREADY_PUBLISHED=true" >> "$GITHUB_ENV"
             exit 0
@@ -130,8 +130,8 @@ jobs:
           CRATE="device-sdk"
           VERSION="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "device-sdk"))')"
 
-          PUBLISHED="$(cargo search "$CRATE" --limit 1 2>/dev/null | head -1)"
-          if echo "$PUBLISHED" | grep -qF "\"$VERSION\""; then
+          PUBLISHED="$(cargo search "$CRATE" --registry crates-io --limit 1 2>/dev/null | head -1)"
+          if echo "$PUBLISHED" | grep -q "^$CRATE = \"$VERSION\""; then
             echo "::notice::$CRATE $VERSION is already on crates.io, skipping publish"
             exit 0
           fi
@@ -143,8 +143,8 @@ jobs:
           CRATE="controller-sdk"
           VERSION="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "controller-sdk"))')"
 
-          PUBLISHED="$(cargo search "$CRATE" --limit 1 2>/dev/null | head -1)"
-          if echo "$PUBLISHED" | grep -qF "\"$VERSION\""; then
+          PUBLISHED="$(cargo search "$CRATE" --registry crates-io --limit 1 2>/dev/null | head -1)"
+          if echo "$PUBLISHED" | grep -q "^$CRATE = \"$VERSION\""; then
             echo "::notice::$CRATE $VERSION is already on crates.io, skipping publish"
             exit 0
           fi
