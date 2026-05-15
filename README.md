@@ -254,7 +254,7 @@ See [`doc/RELEASE.md`](doc/RELEASE.md) for the full release process, including S
 
 ## Deployment and Operations
 
-See [`deploy/README.md`](deploy/README.md) for the full deployment documentation covering Docker Compose, bare-metal, Kubernetes, Prometheus, Grafana, and Mosquitto. See [`deploy/BUILD.md`](deploy/BUILD.md) for manual build instructions (binary and Docker image).
+See [`deploy/README.md`](deploy/README.md) for the full deployment documentation covering Docker Compose, bare-metal, Kubernetes, Prometheus, and Grafana. See [`deploy/BUILD.md`](deploy/BUILD.md) for manual build instructions (binary and Docker image).
 
 Pre-built Docker images are published to `ghcr.io/cokkiy/grpc-relay` on every release — no local Rust toolchain required to run the relay.
 
