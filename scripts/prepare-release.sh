@@ -242,7 +242,7 @@ success "Updated SDK manifests"
 info "Updating Cargo.lock..."
 if ! cargo check --workspace --quiet 2>&1; then
     error "cargo check failed — reverting changes"
-    git checkout -- "$CARGO_TOML" crates/device-sdk/Cargo.toml crates/controller-sdk/Cargo.toml
+    git checkout -- "$CARGO_TOML" Cargo.lock crates/device-sdk/Cargo.toml crates/controller-sdk/Cargo.toml
     exit 1
 fi
 success "Cargo.lock updated"
