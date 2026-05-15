@@ -142,6 +142,7 @@ echo ""
 echo -e "${BOLD}This will:${NC}"
 echo "  1. Create branch:            $BRANCH"
 echo "  2. Update Cargo.toml version: $CURRENT_VERSION → $VERSION"
+echo "     and bump relay-proto in device-sdk/controller-sdk"
 echo "  3. Run cargo check to verify the workspace builds"
 echo "  4. Commit the changes on the branch"
 echo "  5. Push the branch to origin"
@@ -212,11 +213,43 @@ fi
 
 success "Updated Cargo.toml"
 
+# ─── Update SDK relay-proto dependency versions ─────────────────────────────
+info "Updating relay-proto dependency versions in SDK manifests..."
+
+for manifest in crates/device-sdk/Cargo.toml crates/controller-sdk/Cargo.toml; do
+    python - "$VERSION" "$manifest" <<'PY'
+import pathlib
+import re
+import sys
+
+version = sys.argv[1]
+path = pathlib.Path(sys.argv[2])
+text = path.read_text()
+pattern = (
+    r'^(?P<indent>\s*)relay-proto\s*=\s*\{\s*'
+    r'(?:version\s*=\s*"[^"]+"\s*,\s*path\s*=\s*"\.\./relay-proto"|'
+    r'path\s*=\s*"\.\./relay-proto"(?:\s*,\s*version\s*=\s*"[^"]+")?)'
+    r'\s*\}\s*$'
+)
+replacement = (
+    f'\\g<indent>relay-proto = {{ version = "{version}", path = "../relay-proto" }}'
+)
+new_text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
+
+if count != 1:
+    raise SystemExit(f"failed to update relay-proto version in {path}")
+
+path.write_text(new_text)
+PY
+done
+
+success "Updated SDK manifests"
+
 # ─── Update Cargo.lock ───────────────────────────────────────────────────────
 info "Updating Cargo.lock..."
 if ! cargo check --workspace --quiet 2>&1; then
     error "cargo check failed — reverting changes"
-    git checkout -- "$CARGO_TOML"
+    git checkout -- "$CARGO_TOML" Cargo.lock crates/device-sdk/Cargo.toml crates/controller-sdk/Cargo.toml
     exit 1
 fi
 success "Cargo.lock updated"
@@ -226,17 +259,18 @@ echo ""
 info "Changes to commit:"
 echo ""
 git --no-pager diff --stat Cargo.toml Cargo.lock
+git --no-pager diff --stat crates/device-sdk/Cargo.toml crates/controller-sdk/Cargo.toml
 echo ""
 
 read -rp "Commit these changes? [y/N] " yn
 if [[ ! $yn =~ ^[Yy]$ ]]; then
     warn "Aborted by user. Reverting changes..."
-    git checkout -- Cargo.toml Cargo.lock
+    git checkout -- Cargo.toml Cargo.lock crates/device-sdk/Cargo.toml crates/controller-sdk/Cargo.toml
     git checkout "$DEFAULT_BRANCH" 2>/dev/null || true
     die "Aborted. Branch '$BRANCH' still exists — delete it manually if needed."
 fi
 
-git add Cargo.toml Cargo.lock
+git add Cargo.toml Cargo.lock crates/device-sdk/Cargo.toml crates/controller-sdk/Cargo.toml
 git commit -m "chore: bump version to $VERSION"
 success "Committed"
 

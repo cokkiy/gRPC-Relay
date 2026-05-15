@@ -28,7 +28,7 @@ bytes = "1"
 tokio-stream = "0.1"
 
 # local
-relay-proto = { path = "../relay-proto" }
+relay-proto = { workspace = true, path = "../relay-proto" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
