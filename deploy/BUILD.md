@@ -6,7 +6,7 @@ Build the `relay` binary from source, or build the Docker image locally.
 
 | Dependency | Version | Required | Notes |
 |---|---|---|---|
-| Rust | stable (1.95+) | Yes | Install via [rustup](https://rustup.rs) |
+| Rust | stable | Yes | Install via [rustup](https://rustup.rs) |
 | OpenSSL | libssl-dev | Yes | Linking dependency for TLS |
 | pkg-config | any | Yes | Build dependency detection |
 
