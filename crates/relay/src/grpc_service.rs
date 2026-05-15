@@ -2104,12 +2104,17 @@ mod tests {
 
         // Stop sending heartbeats — just wait for the stream to close
         let response = device_stream.recv().await;
-        assert!(response.is_none(), "device stream should close due to heartbeat timeout");
+        assert!(
+            response.is_none(),
+            "device stream should close due to heartbeat timeout"
+        );
 
         // Offline event with timeout reason should be published
         let offline = mqtt_rx.recv().await.unwrap();
         match offline {
-            mqtt::MqttPublishRequest::DeviceOffline { device_id, reason, .. } => {
+            mqtt::MqttPublishRequest::DeviceOffline {
+                device_id, reason, ..
+            } => {
                 assert_eq!(device_id, "dev-1");
                 assert_eq!(reason, "timeout");
             }

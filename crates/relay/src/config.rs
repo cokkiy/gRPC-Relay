@@ -436,6 +436,7 @@ impl AppConfig {
 
         let mut app_config: Self = config.try_deserialize()?;
         app_config.apply_legacy_env_overrides();
+        app_config.validate()?;
 
         Ok(app_config)
     }
@@ -448,6 +449,29 @@ impl AppConfig {
         if let Ok(log_level) = std::env::var("RUST_LOG") {
             self.observability.logging.level = log_level;
         }
+    }
+
+    fn validate(&self) -> Result<()> {
+        if self.relay.heartbeat_interval_seconds == 0 {
+            return Err(AppError::Validation(
+                "relay.heartbeat_interval_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.relay.heartbeat_timeout_seconds == 0 {
+            return Err(AppError::Validation(
+                "relay.heartbeat_timeout_seconds must be greater than 0".to_string(),
+            ));
+        }
+
+        if self.relay.heartbeat_timeout_seconds < self.relay.heartbeat_interval_seconds {
+            return Err(AppError::Validation(format!(
+                "relay.heartbeat_timeout_seconds ({}) must be greater than or equal to relay.heartbeat_interval_seconds ({})",
+                self.relay.heartbeat_timeout_seconds, self.relay.heartbeat_interval_seconds
+            )));
+        }
+
+        Ok(())
     }
 }
 
@@ -684,4 +708,58 @@ fn default_alert_rules() -> Vec<AlertRuleConfig> {
             duration_seconds: None,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppConfig;
+    use std::io::Write;
+    use tempfile::NamedTempFile;
+
+    fn write_config(contents: &str) -> NamedTempFile {
+        let mut file = NamedTempFile::new().expect("create temp config");
+        file.write_all(contents.as_bytes())
+            .expect("write temp config");
+        file.flush().expect("flush temp config");
+        file
+    }
+
+    #[test]
+    fn load_rejects_zero_heartbeat_timeout() {
+        let file = write_config(
+            r#"
+relay:
+  id: relay-1
+  address: 0.0.0.0:50051
+  heartbeat_timeout_seconds: 0
+"#,
+        );
+
+        let err = AppConfig::load(file.path()).expect_err("config should be rejected");
+
+        assert_eq!(
+            err.to_string(),
+            "validation error: relay.heartbeat_timeout_seconds must be greater than 0"
+        );
+    }
+
+    #[test]
+    fn load_rejects_heartbeat_timeout_shorter_than_interval() {
+        let file = write_config(
+            r#"
+relay:
+  id: relay-1
+  address: 0.0.0.0:50051
+  heartbeat_interval_seconds: 30
+  heartbeat_timeout_seconds: 29
+"#,
+        );
+
+        let err = AppConfig::load(file.path()).expect_err("config should be rejected");
+
+        assert_eq!(
+            err.to_string(),
+            "validation error: relay.heartbeat_timeout_seconds (29) must be greater than or equal to relay.heartbeat_interval_seconds (30)"
+        );
+    }
 }
