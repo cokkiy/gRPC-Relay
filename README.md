@@ -3,6 +3,7 @@
 [![CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)
 [![Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml)
 [![Create Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml)
+[![GHCR Image](https://img.shields.io/github/v/release/cokkiy/gRPC-Relay?label=ghcr.io%2Fcokkiy%2Fgrpc-relay&color=blue)](https://github.com/cokkiy/gRPC-Relay/pkgs/container/grpc-relay)
 [![relay-proto](https://img.shields.io/crates/v/relay-proto?label=relay-proto)](https://crates.io/crates/relay-proto)
 [![device-sdk](https://img.shields.io/crates/v/device-sdk?label=device-sdk)](https://crates.io/crates/device-sdk)
 [![controller-sdk](https://img.shields.io/crates/v/controller-sdk?label=controller-sdk)](https://crates.io/crates/controller-sdk)
@@ -253,12 +254,16 @@ See [`doc/RELEASE.md`](doc/RELEASE.md) for the full release process, including S
 
 ## Deployment and Operations
 
+See [`deploy/README.md`](deploy/README.md) for the full deployment documentation covering Docker Compose, bare-metal, Kubernetes, Prometheus, and Grafana. See [`deploy/BUILD.md`](deploy/BUILD.md) for manual build instructions (binary and Docker image).
+
+Pre-built Docker images are published to `ghcr.io/cokkiy/grpc-relay` on every release — no local Rust toolchain required to run the relay.
+
 ### Deployment Options
 
 | Method | Directory | What's included |
 |--------|-----------|-----------------|
+| **Docker** | `Dockerfile`, `docker-compose.yml`, [`deploy/docker/`](deploy/docker/) | Pre-built GHCR image, Compose with MQTT + Prometheus + Grafana + Jaeger |
 | **Bare Metal** | [`deploy/bare-metal/`](deploy/bare-metal/) | systemd service, install/uninstall/upgrade scripts, env template |
-| **Docker** | `Dockerfile`, `docker-compose.yml` | Multi-stage Rust build, slim runtime image, Compose with MQTT + Prometheus + Grafana |
 | **Kubernetes** | [`deploy/kubernetes/`](deploy/kubernetes/) | Deployment, Service, ConfigMap, Secret, HPA, NetworkPolicy, PDB, ServiceAccount, Namespace, Kustomization |
 
 ### Monitoring Stack

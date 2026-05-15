@@ -1,7 +1,8 @@
 services:
   relay:
-    build: .
-    image: grpc-relay:latest
+    image: ghcr.io/cokkiy/grpc-relay:${RELAY_VERSION:-latest}
+    # For local development, comment the image line above and uncomment build below:
+    # build: .
     container_name: relay-001
     env_file:
       - .env
@@ -13,9 +14,9 @@ services:
       - ./config/relay.yaml:/etc/relay/relay.yaml:ro
       - relay-logs:/var/log/relay
     environment:
-      RELAY_ID: relay-001
-      RUST_LOG: info
-      RELAY__MQTT__BROKER_ADDRESS: mqtt:1883
+      RELAY_ID: ${RELAY_ID:-relay-001}
+      RUST_LOG: ${RUST_LOG:-info}
+      RELAY__MQTT__BROKER_ADDRESS: ${RELAY__MQTT__BROKER_ADDRESS:-mqtt:1883}
     depends_on:
       mqtt:
         condition: service_started

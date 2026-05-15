@@ -20,5 +20,5 @@ labels:
       app.kubernetes.io/managed-by: kustomize
 
 images:
-  - name: grpc-relay
+  - name: ghcr.io/cokkiy/grpc-relay
     newTag: latest

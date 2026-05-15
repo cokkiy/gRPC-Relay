@@ -41,8 +41,8 @@ spec:
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: relay
-          image: grpc-relay:latest
-          imagePullPolicy: IfNotPresent
+          image: ghcr.io/cokkiy/grpc-relay:latest
+          imagePullPolicy: Always
           args: ["--config", "/etc/relay/relay.yaml"]
           securityContext:
             readOnlyRootFilesystem: true
@@ -88,7 +88,7 @@ spec:
               memory: "16Gi"
           livenessProbe:
             httpGet:
-              path: /health
+              path: /health/live
               port: 8080
             initialDelaySeconds: 30
             periodSeconds: 10
@@ -96,7 +96,7 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /health
+              path: /health/ready
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 5

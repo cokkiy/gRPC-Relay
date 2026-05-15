@@ -3,6 +3,7 @@
 [![CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)
 [![Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml)
 [![Create Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml)
+[![GHCR Image](https://img.shields.io/github/v/release/cokkiy/gRPC-Relay?label=ghcr.io%2Fcokkiy%2Fgrpc-relay&color=blue)](https://github.com/cokkiy/gRPC-Relay/pkgs/container/grpc-relay)
 [![relay-proto](https://img.shields.io/crates/v/relay-proto?label=relay-proto)](https://crates.io/crates/relay-proto)
 [![device-sdk](https://img.shields.io/crates/v/device-sdk?label=device-sdk)](https://crates.io/crates/device-sdk)
 [![controller-sdk](https://img.shields.io/crates/v/controller-sdk?label=controller-sdk)](https://crates.io/crates/controller-sdk)
@@ -253,12 +254,16 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 
 ## 部署与运维
 
+完整的部署文档见 [`deploy/README.md`](deploy/README.md)，涵盖 Docker Compose、裸机部署、Kubernetes 以及 Prometheus、Grafana 等配套组件。MQTT Broker 通过 Docker Compose 方案集成提供。手动构建说明见 [`deploy/BUILD.md`](deploy/BUILD.md)（二进制文件和 Docker 镜像）。
+
+预构建的 Docker 镜像在每次发版时发布到 `ghcr.io/cokkiy/grpc-relay` — 无需本地 Rust 工具链即可运行 relay。
+
 ### 部署方式
 
 | 方式 | 目录 | 内容 |
 |--------|-----------|-----------------|
+| **Docker** | `Dockerfile`、`docker-compose.yml`、[`deploy/docker/`](deploy/docker/) | 预构建 GHCR 镜像、Compose 集成 MQTT + Prometheus + Grafana + Jaeger |
 | **裸机部署** | [`deploy/bare-metal/`](deploy/bare-metal/) | systemd 服务、安装/卸载/升级脚本、环境变量模板 |
-| **Docker** | `Dockerfile`、`docker-compose.yml` | 多阶段 Rust 构建、精简运行时镜像、Compose 集成 MQTT + Prometheus + Grafana |
 | **Kubernetes** | [`deploy/kubernetes/`](deploy/kubernetes/) | Deployment、Service、ConfigMap、Secret、HPA、NetworkPolicy、PDB、ServiceAccount、Namespace、Kustomization |
 
 ### 监控套件
