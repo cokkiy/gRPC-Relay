@@ -3,6 +3,7 @@
 [![CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)
 [![Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml)
 [![Create Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml)
+[![GHCR Image](https://img.shields.io/github/v/release/cokkiy/gRPC-Relay?label=ghcr.io%2Fcokkiy%2Fgrpc-relay&color=blue)](https://github.com/cokkiy/gRPC-Relay/pkgs/container/grpc-relay)
 [![relay-proto](https://img.shields.io/crates/v/relay-proto?label=relay-proto)](https://crates.io/crates/relay-proto)
 [![device-sdk](https://img.shields.io/crates/v/device-sdk?label=device-sdk)](https://crates.io/crates/device-sdk)
 [![controller-sdk](https://img.shields.io/crates/v/controller-sdk?label=controller-sdk)](https://crates.io/crates/controller-sdk)
