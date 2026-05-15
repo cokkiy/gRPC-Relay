@@ -254,12 +254,16 @@ See [`doc/RELEASE.md`](doc/RELEASE.md) for the full release process, including S
 
 ## Deployment and Operations
 
+See [`deploy/README.md`](deploy/README.md) for the full deployment documentation covering Docker Compose, bare-metal, Kubernetes, Prometheus, Grafana, and Mosquitto. See [`deploy/BUILD.md`](deploy/BUILD.md) for manual build instructions (binary and Docker image).
+
+Pre-built Docker images are published to `ghcr.io/cokkiy/grpc-relay` on every release — no local Rust toolchain required to run the relay.
+
 ### Deployment Options
 
 | Method | Directory | What's included |
 |--------|-----------|-----------------|
+| **Docker** | `Dockerfile`, `docker-compose.yml`, [`deploy/docker/`](deploy/docker/) | Pre-built GHCR image, Compose with MQTT + Prometheus + Grafana + Jaeger |
 | **Bare Metal** | [`deploy/bare-metal/`](deploy/bare-metal/) | systemd service, install/uninstall/upgrade scripts, env template |
-| **Docker** | `Dockerfile`, `docker-compose.yml` | Multi-stage Rust build, slim runtime image, Compose with MQTT + Prometheus + Grafana |
 | **Kubernetes** | [`deploy/kubernetes/`](deploy/kubernetes/) | Deployment, Service, ConfigMap, Secret, HPA, NetworkPolicy, PDB, ServiceAccount, Namespace, Kustomization |
 
 ### Monitoring Stack
