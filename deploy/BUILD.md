@@ -120,7 +120,7 @@ relay --config <path>
 |---|---|---|
 | `50051` | TCP (gRPC) | Controller and device gRPC connections |
 | `50052` | UDP (QUIC) | Optional QUIC transport |
-| `8080` | TCP (HTTP) | Health checks (`/health`) and Prometheus metrics (`/metrics`) |
+| `8080` | TCP (HTTP) | Readiness checks (`/health/ready`), liveness checks (`/health/live`), and Prometheus metrics (`/metrics`) |
 
 ## Docker image
 
