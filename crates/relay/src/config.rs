@@ -19,6 +19,8 @@ pub struct RelayConfig {
     pub max_device_connections: u32,
     #[serde(default = "default_heartbeat_interval_seconds")]
     pub heartbeat_interval_seconds: u64,
+    #[serde(default = "default_heartbeat_timeout_seconds")]
+    pub heartbeat_timeout_seconds: u64,
     #[serde(default)]
     pub stream: StreamConfig,
     #[serde(default)]
@@ -459,6 +461,10 @@ fn default_max_device_connections() -> u32 {
 
 fn default_heartbeat_interval_seconds() -> u64 {
     30
+}
+
+fn default_heartbeat_timeout_seconds() -> u64 {
+    120
 }
 
 fn default_log_level() -> String {

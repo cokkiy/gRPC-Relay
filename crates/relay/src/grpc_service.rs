@@ -42,6 +42,7 @@ pub struct RelayGrpcService {
     stream_router: StreamRouter,
     session_registry: SessionRegistry,
     inflight_timeout: Duration,
+    heartbeat_timeout: Duration,
     auth_service: AuthService,
     rbac: RbacPolicyEngine,
     security_metrics: SecurityMetrics,
@@ -75,6 +76,7 @@ impl RelayGrpcService {
             stream_router: StreamRouter::new(&config.relay.stream),
             session_registry: SessionRegistry::new(state.clone()),
             inflight_timeout: Duration::from_secs(60),
+            heartbeat_timeout: Duration::from_secs(config.relay.heartbeat_timeout_seconds),
             state,
             relay_address: config.relay.address.clone(),
             auth_service,
@@ -120,6 +122,7 @@ impl RelayGrpcService {
         mqtt_publisher: Option<MqttPublisher>,
         audit_logger: Option<std::sync::Arc<AuditLogger>>,
         relay_address: String,
+        heartbeat_timeout: Duration,
         mut inbound: S,
         out_tx: mpsc::Sender<Result<RelayMessage, Status>>,
     ) where
@@ -129,7 +132,31 @@ impl RelayGrpcService {
         let mut current_connection_id: Option<String> = None;
         let mut disconnect_reason = "closed";
 
-        while let Some(next_message) = inbound.next().await {
+        loop {
+            let next_message = match tokio::time::timeout(heartbeat_timeout, inbound.next()).await {
+                Ok(Some(Ok(msg))) => {
+                    // Update last_seen on any valid message
+                    if !msg.device_id.is_empty() {
+                        state.touch_device(&msg.device_id);
+                    }
+                    Some(Ok(msg))
+                }
+                Ok(Some(Err(e))) => Some(Err(e)),
+                Ok(None) => None,
+                Err(_elapsed) => {
+                    tracing::warn!(
+                        device_id = %current_device_id.as_deref().unwrap_or("unknown"),
+                        timeout_seconds = heartbeat_timeout.as_secs(),
+                        "device heartbeat timeout"
+                    );
+                    disconnect_reason = "timeout";
+                    break;
+                }
+            };
+
+            let Some(next_message) = next_message else {
+                break;
+            };
             let Ok(dev_msg) = next_message else {
                 disconnect_reason = "error";
                 break;
@@ -991,6 +1018,7 @@ mod tests {
                 quic_address: "127.0.0.1:50052".into(),
                 max_device_connections: 1_000,
                 heartbeat_interval_seconds: 30,
+                heartbeat_timeout_seconds: 120,
                 stream: StreamConfig {
                     idle_timeout_seconds: 60,
                     max_active_streams: 100,
@@ -1107,6 +1135,7 @@ mod tests {
             service.mqtt_publisher.clone(),
             service.audit_logger.clone(),
             service.relay_address.clone(),
+            service.heartbeat_timeout,
             inbound,
             relay_tx,
         ));
@@ -1562,6 +1591,7 @@ mod tests {
             service.mqtt_publisher.clone(),
             service.audit_logger.clone(),
             service.relay_address.clone(),
+            service.heartbeat_timeout,
             inbound,
             relay_tx,
         ));
@@ -1665,6 +1695,7 @@ mod tests {
                 quic_address: "127.0.1:50052".into(),
                 max_device_connections: 1_000,
                 heartbeat_interval_seconds: 30,
+                heartbeat_timeout_seconds: 120,
                 stream: StreamConfig {
                     idle_timeout_seconds: 60,
                     max_active_streams: 100,
@@ -1782,6 +1813,7 @@ mod tests {
             service.mqtt_publisher.clone(),
             service.audit_logger.clone(),
             service.relay_address.clone(),
+            service.heartbeat_timeout,
             inbound,
             relay_tx,
         ));
@@ -2049,6 +2081,40 @@ mod tests {
 
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
     }
+
+    #[tokio::test]
+    async fn device_heartbeat_timeout_disconnects_and_publishes_offline() {
+        let mut cfg = test_config();
+        cfg.relay.heartbeat_timeout_seconds = 1; // short timeout for test
+        let (service, _state, mut mqtt_rx) = service_with_mqtt(cfg);
+        let (device_tx, mut device_stream, _connection_id) =
+            start_device_loop(&service, "dev-1").await;
+
+        // Verify device registered and online event published
+        let online = mqtt_rx.recv().await.unwrap();
+        match online {
+            mqtt::MqttPublishRequest::DeviceOnline { device_id, .. } => {
+                assert_eq!(device_id, "dev-1");
+            }
+            other => panic!("unexpected mqtt event: {other:?}"),
+        }
+
+        // Stop sending heartbeats — just wait for the stream to close
+        let response = device_stream.recv().await;
+        assert!(response.is_none(), "device stream should close due to heartbeat timeout");
+
+        // Offline event with timeout reason should be published
+        let offline = mqtt_rx.recv().await.unwrap();
+        match offline {
+            mqtt::MqttPublishRequest::DeviceOffline { device_id, reason, .. } => {
+                assert_eq!(device_id, "dev-1");
+                assert_eq!(reason, "timeout");
+            }
+            other => panic!("unexpected mqtt event: {other:?}"),
+        }
+
+        drop(device_tx);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2138,6 +2204,7 @@ impl RelayService for RelayGrpcService {
         let mqtt_publisher = self.mqtt_publisher.clone();
         let audit_logger = self.audit_logger.clone();
         let relay_address = self.relay_address.clone();
+        let heartbeat_timeout = self.heartbeat_timeout;
         tokio::spawn(async move {
             Self::run_device_connect_stream(
                 state,
@@ -2150,6 +2217,7 @@ impl RelayService for RelayGrpcService {
                 mqtt_publisher,
                 audit_logger,
                 relay_address,
+                heartbeat_timeout,
                 inbound,
                 out_tx,
             )
