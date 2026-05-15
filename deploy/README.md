@@ -1,6 +1,6 @@
 # Deploy
 
-Deployment assets for running gRPC-Relay via Docker Compose, on bare-metal Linux hosts, or on Kubernetes clusters, with optional Prometheus/Grafana monitoring and MQTT broker integration.
+Deployment assets for running gRPC-Relay via Docker Compose, on bare-metal Linux hosts, or on Kubernetes clusters, with optional Prometheus/Grafana monitoring and MQTT broker integration. See [BUILD.md](BUILD.md) for manual build instructions (binary and Docker image).
 
 ## Directory structure
 
