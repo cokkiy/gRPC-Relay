@@ -27,6 +27,7 @@ It is intended for the following scenarios:
 - [API Design](#api-design)
 - [Security and Authorization Model](#security-and-authorization-model)
 - [Non-Functional Requirements](#non-functional-requirements)
+- [CI/CD](#cicd)
 - [Deployment and Operations](#deployment-and-operations)
 - [Testing Strategy](#testing-strategy)
 - [MVP Scope and Roadmap](#mvp-scope-and-roadmap)
@@ -220,58 +221,77 @@ The system uses **RBAC + device ownership**:
 
 The system provides:
 
-- `/health` health check
-- `/metrics/security` security metrics endpoint
-- Full Prometheus `/metrics` endpoint (deferred beyond the current MVP/P1)
-- Structured logging
-- Audit logging
-- OpenTelemetry tracing
-- MQTT telemetry publishing
+- `/health` health check (with component-level status)
+- Full Prometheus `/metrics` endpoint (connection, stream, latency, error, resource metrics)
+- Structured JSON logging (via `tracing-subscriber`)
+- Audit logging (auth events, connections, rate limits, errors)
+- OpenTelemetry distributed tracing (OTLP exporter, configurable sampling)
+- MQTT relay telemetry publishing
+- Built-in alerting engine (CPU, memory, MQTT, connection thresholds)
+
+## CI/CD
+
+Three GitHub Actions workflows automate quality checks, releases, and publishing.
+
+| Workflow | Trigger | What it does |
+|----------|---------|--------------|
+| **[CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)** | push (master), PR, tag, manual | `cargo fmt --check` → `cargo clippy` → `cargo check` → unit tests + integration tests → coverage (80% threshold) → Docker build |
+| **[Create Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml)** | manual (`workflow_dispatch`) | Validates version vs `Cargo.toml`, runs full test suite, builds release binary, verifies `relay --version`, creates git tag, generates categorized release notes, creates GitHub release, triggers **Release** |
+| **[Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml)** | `release: published` | Publishes `relay-proto` to crates.io, waits for index propagation, publishes `device-sdk` and `controller-sdk`, builds and pushes Docker image to GHCR |
+
+### Release Flow
+
+```
+  prepare-release.sh          PR merge              create-release.yml       release.yml (auto)
+  (local: bumps version,  →   (CI validates    →    (tag + GitHub       →    (crates.io + GHCR
+   opens a PR)                on the branch)        release)                 Docker image)
+```
+
+See [`doc/RELEASE.md`](doc/RELEASE.md) for the full release process, including SemVer guidance, rollback procedures, and troubleshooting.
 
 ---
 
 ## Deployment and Operations
 
-### Single-Node Deployment
+### Deployment Options
 
-The first release uses a single Relay node, supported by:
+| Method | Directory | What's included |
+|--------|-----------|-----------------|
+| **Bare Metal** | [`deploy/bare-metal/`](deploy/bare-metal/) | systemd service, install/uninstall/upgrade scripts, env template |
+| **Docker** | `Dockerfile`, `docker-compose.yml` | Multi-stage Rust build, slim runtime image, Compose with MQTT + Prometheus + Grafana |
+| **Kubernetes** | [`deploy/kubernetes/`](deploy/kubernetes/) | Deployment, Service, ConfigMap, Secret, HPA, NetworkPolicy, PDB, ServiceAccount, Namespace, Kustomization |
 
-- MQTT Broker
-- Prometheus
-- Grafana
-- Authentication service
+### Monitoring Stack
+
+| Component | Path | Purpose |
+|-----------|------|---------|
+| **Grafana** | [`deploy/grafana/`](deploy/grafana/) | Pre-built `relay-overview` dashboard + Prometheus datasource |
+| **Prometheus** | [`deploy/prometheus/`](deploy/prometheus/) | Scrape config targeting relay metrics endpoint |
+| **Mosquitto** | [`deploy/mosquitto/`](deploy/mosquitto/) | MQTT broker configuration |
 
 ### Recommended Ports
 
-- `50051/TCP`: gRPC
-- `50052/UDP`: gRPC over QUIC
-- `8080/TCP`: health checks and `/metrics/security`
-- `8883/TCP`: MQTT over TLS
+| Port | Protocol | Purpose |
+|------|----------|---------|
+| `50051` | TCP | gRPC (HTTP/2) |
+| `50052` | UDP | gRPC over QUIC (v2.0) |
+| `8080` | TCP | `/health` and `/metrics` |
+| `8883` | TCP | MQTT over TLS |
 
 ### Configuration
 
-YAML configuration files are supported, including:
+The relay server is configured via a single YAML file ([example](config/relay.yaml)). Key sections:
 
-- Relay address and connection parameters
-- Heartbeat and timeout settings
-- Rate limiting settings
-- TLS settings
-- Controller JWT settings
-- MQTT settings
-- Session recovery settings
-- Observability settings
-- Alerting settings
-
-### Operational Capabilities
-
-- Start/stop services
-- Rolling updates
-- Log inspection
-- Metrics inspection
-- Token revocation through the Controller SDK `revoke_token(...)`
-- Troubleshooting
-- Certificate rotation
-- Token revocation
+| Section | Contents |
+|---------|----------|
+| `relay` | id, address, QUIC address, max connections, heartbeat interval |
+| `relay.stream` | idle timeout, max active streams, per-controller limits |
+| `relay.rate_limiting` | per-device/controller/global request + connection + bandwidth limits, CPU/memory thresholds |
+| `relay.idempotency` | cache capacity + TTL |
+| `relay.auth` | enable flag, token maps (device + controller), method whitelist, JWT config |
+| `relay.mqtt` | enable flag, broker address, credentials, telemetry interval, reconnect config |
+| `relay.tls` | enable flag, cert/key/CA paths |
+| `observability` | logging level/format, health bind, audit config, OpenTelemetry tracing, alerting rules |
 
 ---
 
