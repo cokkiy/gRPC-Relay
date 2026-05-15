@@ -9,6 +9,7 @@ use tracing::info;
 
 #[derive(Debug, Parser)]
 #[command(name = "relay", about = "gRPC-Relay server")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     #[arg(long, default_value = "config/relay.yaml")]
     config: String,
