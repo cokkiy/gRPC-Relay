@@ -49,10 +49,11 @@ fi
 VERSION=$1
 
 if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-    die "Invalid version format: '$VERSION'"
+    error "Invalid version format: '$VERSION'"
     echo ""
-    die "Expected: MAJOR.MINOR.PATCH[-PRERELEASE]"
+    error "Expected: MAJOR.MINOR.PATCH[-PRERELEASE]"
     echo "Example: 1.0.0 or 1.0.0-rc1"
+    exit 1
 fi
 
 # ─── Locate Repository Root ──────────────────────────────────────────────────
