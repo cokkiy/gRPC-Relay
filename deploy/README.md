@@ -11,7 +11,6 @@ deploy/
 ├── kubernetes/        # Kustomize-based Kubernetes manifests
 ├── prometheus/        # Prometheus scrape configuration
 ├── grafana/           # Grafana dashboards and datasources
-├── mosquitto/         # MQTT broker config placeholder
 ├── BUILD.md           # Manual build from source
 └── README.md
 ```
@@ -279,9 +278,3 @@ cp deploy/grafana/datasources/prometheus.yml /etc/grafana/provisioning/datasourc
 cp deploy/grafana/dashboards/*.yml /etc/grafana/provisioning/dashboards/
 cp deploy/grafana/dashboards/relay-overview.json /etc/grafana/provisioning/dashboards/
 ```
-
----
-
-## Mosquitto
-
-Placeholder directory for MQTT broker (Mosquitto) configuration. Populate with `mosquitto.conf` and TLS certificates when MQTT is enabled in the relay config.
