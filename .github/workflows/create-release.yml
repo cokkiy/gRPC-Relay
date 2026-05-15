@@ -5,7 +5,7 @@ name: Create Release
 #
 #   1. Developer runs `./scripts/prepare-release.sh <version>` locally
 #   2. Developer reviews changes and commits the version bump
-#   3. Developer pushes the commit to the default branch
+#   3. Developer opens a PR and merges the version bump into the default branch
 #   4. Developer triggers THIS workflow with the same version
 #
 # This workflow will:
