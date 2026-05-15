@@ -14,7 +14,7 @@ Images are published to [ghcr.io/cokkiy/grpc-relay](https://github.com/cokkiy/gR
 |---|---|---|
 | `latest` | Latest published release | Every release |
 | `v<version>` | Specific release (e.g., `v1.0.0-alpha`) | Every release |
-| `<sha>` | Specific commit | Every release (via CI) |
+| `sha-<short>` | Specific commit (short SHA tag) | Every release (via CI) |
 
 List all published tags:
 
