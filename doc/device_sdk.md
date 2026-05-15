@@ -14,7 +14,7 @@ The third action-plan item, "设备侧接入链路", is now substantially comple
 | Register message | Implemented | Implemented |
 | Heartbeat loop | Implemented | Implemented (with 120s timeout detection) |
 | Disconnect handling | Reconnects after stream close | Session cleanup with MQTT offline publish |
-| Session recovery request | Sends `previous_connection_id` inside recovery window | Recovery registry implemented |
+| Session recovery request | Sends `previous_connection_id` inside recovery window | Limited: true post-disconnect session recovery not implemented without a disconnected-session registry |
 | TCP fallback transport | Implemented via tonic HTTP/2 endpoint | Relay gRPC server started |
 | QUIC transport | Config field reserved | Deferred to v2 |
 | Controller-to-device data response | Handler callback + `DataResponse` implemented | Stream router implemented |
