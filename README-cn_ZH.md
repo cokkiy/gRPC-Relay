@@ -235,7 +235,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 
 | 工作流 | 触发方式 | 内容 |
 |--------|----------|------|
-| **[CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)** | push (master)、PR、tag、手动 | `cargo fmt --check` → `cargo clippy` → `cargo check` → 单元测试 + 集成测试 → 覆盖率（80% 阈值）→ Docker 构建 |
+| **[CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)** | push (master/main)、PR、tag、手动 | `cargo fmt --check` → `cargo clippy` → `cargo check` → 单元测试 + 集成测试 → 覆盖率（80% 阈值）→ Docker 构建 |
 | **[Create Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml)** | 手动 (`workflow_dispatch`) | 验证版本号与 `Cargo.toml` 一致，运行完整测试，构建 release 二进制，验证 `relay --version`，创建 git tag，生成分类发版说明，创建 GitHub release，触发 **Release** |
 | **[Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml)** | `release: published` | 发布 `relay-proto` 到 crates.io，等待索引传播，发布 `device-sdk` 和 `controller-sdk`，构建并推送 Docker 镜像到 GHCR |
 
