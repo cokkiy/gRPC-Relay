@@ -235,7 +235,7 @@ Three GitHub Actions workflows automate quality checks, releases, and publishing
 
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
-| **[CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)** | push (master), PR, tag, manual | `cargo fmt --check` → `cargo clippy` → `cargo check` → unit tests + integration tests → coverage (80% threshold) → Docker build |
+| **[CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)** | push (master/main), PR (master/main), tag, manual | `cargo fmt --check` → `cargo clippy` → `cargo check` → unit tests + integration tests → coverage (80% threshold) → Docker build |
 | **[Create Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml)** | manual (`workflow_dispatch`) | Validates version vs `Cargo.toml`, runs full test suite, builds release binary, verifies `relay --version`, creates git tag, generates categorized release notes, creates GitHub release, triggers **Release** |
 | **[Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml)** | `release: published` | Publishes `relay-proto` to crates.io, waits for index propagation, publishes `device-sdk` and `controller-sdk`, builds and pushes Docker image to GHCR |
 
