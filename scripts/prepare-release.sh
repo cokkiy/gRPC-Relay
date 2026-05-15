@@ -225,9 +225,16 @@ import sys
 version = sys.argv[1]
 path = pathlib.Path(sys.argv[2])
 text = path.read_text()
-pattern = r'relay-proto = \{ version = "[^"]+", path = "\.\./relay-proto" \}'
-replacement = f'relay-proto = {{ version = "{version}", path = "../relay-proto" }}'
-new_text, count = re.subn(pattern, replacement, text)
+pattern = (
+    r'^(?P<indent>\s*)relay-proto\s*=\s*\{\s*'
+    r'(?:version\s*=\s*"[^"]+"\s*,\s*path\s*=\s*"\.\./relay-proto"|'
+    r'path\s*=\s*"\.\./relay-proto"(?:\s*,\s*version\s*=\s*"[^"]+")?)'
+    r'\s*\}\s*$'
+)
+replacement = (
+    f'\\g<indent>relay-proto = {{ version = "{version}", path = "../relay-proto" }}'
+)
+new_text, count = re.subn(pattern, replacement, text, flags=re.MULTILINE)
 
 if count != 1:
     raise SystemExit(f"failed to update relay-proto version in {path}")
