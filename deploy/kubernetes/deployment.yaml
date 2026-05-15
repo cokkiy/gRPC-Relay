@@ -41,7 +41,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
       containers:
         - name: relay
-          image: grpc-relay:latest
+          image: ghcr.io/cokkiy/grpc-relay:latest
           imagePullPolicy: IfNotPresent
           args: ["--config", "/etc/relay/relay.yaml"]
           securityContext:
