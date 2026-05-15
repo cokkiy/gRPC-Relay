@@ -464,9 +464,9 @@ impl AppConfig {
             ));
         }
 
-        if self.relay.heartbeat_timeout_seconds < self.relay.heartbeat_interval_seconds {
+        if self.relay.heartbeat_timeout_seconds <= self.relay.heartbeat_interval_seconds {
             return Err(AppError::Validation(format!(
-                "relay.heartbeat_timeout_seconds ({}) must be greater than or equal to relay.heartbeat_interval_seconds ({})",
+                "relay.heartbeat_timeout_seconds ({}) must be greater than relay.heartbeat_interval_seconds ({})",
                 self.relay.heartbeat_timeout_seconds, self.relay.heartbeat_interval_seconds
             )));
         }
@@ -744,14 +744,14 @@ relay:
     }
 
     #[test]
-    fn load_rejects_heartbeat_timeout_shorter_than_interval() {
+    fn load_rejects_heartbeat_timeout_equal_to_interval() {
         let file = write_config(
             r#"
 relay:
   id: relay-1
   address: 0.0.0.0:50051
   heartbeat_interval_seconds: 30
-  heartbeat_timeout_seconds: 29
+  heartbeat_timeout_seconds: 30
 "#,
         );
 
@@ -759,7 +759,7 @@ relay:
 
         assert_eq!(
             err.to_string(),
-            "validation error: relay.heartbeat_timeout_seconds (29) must be greater than or equal to relay.heartbeat_interval_seconds (30)"
+            "validation error: relay.heartbeat_timeout_seconds (30) must be greater than relay.heartbeat_interval_seconds (30)"
         );
     }
 }

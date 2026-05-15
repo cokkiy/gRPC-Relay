@@ -62,7 +62,7 @@
 - Register / Heartbeat / Disconnect 逻辑：SDK 已实现；Relay 侧已实现 ✅
 - QUIC 连接与 TCP fallback：推迟至 v2（当前使用 tonic HTTP/2 TCP）⏳
 - 心跳超时、离线判定、重连退避：SDK 已实现重连退避；Relay 心跳超时/离线判定已实现 ✅
-- session / connection_id 管理：SDK 支持 recovery 窗口内携带 `previous_connection_id`；Relay session registry 已实现 ✅
+- session / connection_id 管理：SDK 支持 recovery 窗口内携带 `previous_connection_id`；Relay session registry 已实现，但断线后恢复窗口仍未实现 ⏳
 - stationService SDK：见 `crates/device-sdk` 与 `doc/device_sdk.md`
 
 **实现细节**

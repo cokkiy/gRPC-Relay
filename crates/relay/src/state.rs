@@ -147,6 +147,13 @@ impl RelayState {
             .map(|entry| entry.clone())
     }
 
+    pub fn has_active_device_connection(&self, device_id: &str, connection_id: &str) -> bool {
+        self.sessions_by_device_id
+            .get(device_id)
+            .map(|session| session.connection_id == connection_id)
+            .unwrap_or(false)
+    }
+
     pub fn touch_device(&self, device_id: &str) {
         self.device_last_seen
             .insert(device_id.to_string(), Instant::now());
