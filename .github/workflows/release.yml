@@ -3,6 +3,12 @@ name: Release
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Tag name to release (e.g., v1.0.0-rc1)'
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,7 +23,15 @@ jobs:
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
+      - name: Resolve tag name
+        id: tag
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag_name }}"
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.tag.outputs.tag_name }}
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
@@ -33,7 +47,7 @@ jobs:
 
       - name: Verify release tag matches workspace version
         env:
-          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag_name }}
         run: |
           python - <<'PY'
           import os
@@ -144,7 +158,15 @@ jobs:
       contents: read
       packages: write
     steps:
+      - name: Resolve tag name
+        id: tag
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag_name }}"
+          echo "tag_name=$TAG" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.tag.outputs.tag_name }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -159,13 +181,13 @@ jobs:
           images: ${{ env.REGISTRY_IMAGE }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ github.event.release.tag_name }}
+            type=raw,value=${{ steps.tag.outputs.tag_name }}
             type=sha
           labels: |
             org.opencontainers.image.title=gRPC-Relay
             org.opencontainers.image.description=Cross-network gRPC relay server
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.version=${{ github.event.release.tag_name }}
+            org.opencontainers.image.version=${{ steps.tag.outputs.tag_name }}
             org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Login to GHCR
