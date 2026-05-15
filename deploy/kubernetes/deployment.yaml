@@ -42,7 +42,7 @@ spec:
       containers:
         - name: relay
           image: ghcr.io/cokkiy/grpc-relay:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           args: ["--config", "/etc/relay/relay.yaml"]
           securityContext:
             readOnlyRootFilesystem: true
