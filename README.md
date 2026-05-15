@@ -384,5 +384,7 @@ This README was created based on the following project documents:
 - `doc/requirements.md`
 - `doc/architecture.md`
 - `doc/action_plan.md`
+- `doc/RELEASE.md`
+- `doc/v1.0_release_summary.md`
 
 It is intended as a user-facing entry document that emphasizes project overview, architecture, and implementation path.

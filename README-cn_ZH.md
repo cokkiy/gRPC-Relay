@@ -1,5 +1,12 @@
 # gRPC-Relay | [English Version](README.md)
 
+[![CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)
+[![Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml)
+[![Create Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml/badge.svg)](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml)
+[![relay-proto](https://img.shields.io/crates/v/relay-proto?label=relay-proto)](https://crates.io/crates/relay-proto)
+[![device-sdk](https://img.shields.io/crates/v/device-sdk?label=device-sdk)](https://crates.io/crates/device-sdk)
+[![controller-sdk](https://img.shields.io/crates/v/controller-sdk?label=controller-sdk)](https://crates.io/crates/controller-sdk)
+
 gRPC-Relay 是一个用于跨网域通信中继的系统，目标是在内网设备与外部控制端之间建立安全、可控、高性能的 gRPC 通信通道。
 
 它面向以下场景：
@@ -20,6 +27,7 @@ gRPC-Relay 是一个用于跨网域通信中继的系统，目标是在内网设
 - [接口设计](#接口设计)
 - [安全与权限模型](#安全与权限模型)
 - [非功能需求](#非功能需求)
+- [CI/CD](#cicd)
 - [部署与运维](#部署与运维)
 - [测试策略](#测试策略)
 - [MVP 范围与路线图](#mvp-范围与路线图)
@@ -213,58 +221,77 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 
 系统提供：
 
-- `/health` 健康检查
-- `/metrics/security` 安全指标接口
-- 完整 Prometheus `/metrics` 指标导出（当前 MVP/P1 后续再补）
-- 结构化日志
-- 审计日志
-- OpenTelemetry tracing
-- MQTT 遥测发布
+- `/health` 健康检查（含组件级状态）
+- 完整 Prometheus `/metrics` 指标导出（连接、流、延迟、错误、资源指标）
+- 结构化 JSON 日志（通过 `tracing-subscriber`）
+- 审计日志（认证事件、连接、限流、错误）
+- OpenTelemetry 分布式追踪（OTLP 导出器，可配置采样率）
+- MQTT Relay 遥测发布
+- 内置告警引擎（CPU、内存、MQTT、连接阈值）
+
+## CI/CD
+
+三个 GitHub Actions 工作流负责质量检查、发版和发布。
+
+| 工作流 | 触发方式 | 内容 |
+|--------|----------|------|
+| **[CI](https://github.com/cokkiy/gRPC-Relay/actions/workflows/ci.yml)** | push (master)、PR、tag、手动 | `cargo fmt --check` → `cargo clippy` → `cargo check` → 单元测试 + 集成测试 → 覆盖率（80% 阈值）→ Docker 构建 |
+| **[Create Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/create-release.yml)** | 手动 (`workflow_dispatch`) | 验证版本号与 `Cargo.toml` 一致，运行完整测试，构建 release 二进制，验证 `relay --version`，创建 git tag，生成分类发版说明，创建 GitHub release，触发 **Release** |
+| **[Release](https://github.com/cokkiy/gRPC-Relay/actions/workflows/release.yml)** | `release: published` | 发布 `relay-proto` 到 crates.io，等待索引传播，发布 `device-sdk` 和 `controller-sdk`，构建并推送 Docker 镜像到 GHCR |
+
+### 发版流程
+
+```
+  prepare-release.sh          PR 合并             create-release.yml       release.yml (自动)
+  （本地更新版本号，     →    （CI 在分支上    →    （tag + GitHub     →    （crates.io + GHCR
+   发起 PR）                  验证通过）              release）                Docker 镜像）
+```
+
+详见 [`doc/RELEASE.md`](doc/RELEASE.md)，包含 SemVer 规范、回滚流程和故障排查。
 
 ---
 
 ## 部署与运维
 
-### 单节点部署
+### 部署方式
 
-首版采用单 Relay 节点，配套：
+| 方式 | 目录 | 内容 |
+|--------|-----------|-----------------|
+| **裸机部署** | [`deploy/bare-metal/`](deploy/bare-metal/) | systemd 服务、安装/卸载/升级脚本、环境变量模板 |
+| **Docker** | `Dockerfile`、`docker-compose.yml` | 多阶段 Rust 构建、精简运行时镜像、Compose 集成 MQTT + Prometheus + Grafana |
+| **Kubernetes** | [`deploy/kubernetes/`](deploy/kubernetes/) | Deployment、Service、ConfigMap、Secret、HPA、NetworkPolicy、PDB、ServiceAccount、Namespace、Kustomization |
 
-- MQTT Broker
-- Prometheus
-- Grafana
-- 认证服务
+### 监控套件
+
+| 组件 | 路径 | 用途 |
+|-----------|------|---------|
+| **Grafana** | [`deploy/grafana/`](deploy/grafana/) | 预置 `relay-overview` 仪表盘 + Prometheus 数据源 |
+| **Prometheus** | [`deploy/prometheus/`](deploy/prometheus/) | 针对 relay metrics 端点的抓取配置 |
+| **Mosquitto** | [`deploy/mosquitto/`](deploy/mosquitto/) | MQTT broker 配置 |
 
 ### 推荐端口
 
-- `50051/TCP`：gRPC
-- `50052/UDP`：gRPC over QUIC
-- `8080/TCP`：健康检查与 `/metrics/security`
-- `8883/TCP`：MQTT over TLS
+| 端口 | 协议 | 用途 |
+|------|----------|---------|
+| `50051` | TCP | gRPC (HTTP/2) |
+| `50052` | UDP | gRPC over QUIC (v2.0) |
+| `8080` | TCP | `/health` 与 `/metrics` |
+| `8883` | TCP | MQTT over TLS |
 
 ### 配置方式
 
-支持 YAML 配置文件，主要包含：
+Relay 服务通过单个 YAML 文件配置（[示例](config/relay.yaml)）。主要段落：
 
-- Relay 地址与连接参数
-- 心跳与超时配置
-- 限流配置
-- TLS 配置
-- Controller JWT 配置
-- MQTT 配置
-- 会话恢复配置
-- 观测性配置
-- 告警配置
-
-### 运维能力
-
-- 启停服务
-- 滚动更新
-- 查看日志
-- 查看指标
-- 通过 Controller SDK `revoke_token(...)` 撤销 Token
-- 故障排查
-- 证书轮换
-- Token 撤销
+| 段落 | 内容 |
+|---------|----------|
+| `relay` | id、地址、QUIC 地址、最大连接数、心跳间隔 |
+| `relay.stream` | 空闲超时、最大活跃流数、每 Controller 限制 |
+| `relay.rate_limiting` | 按设备/Controller/全局的请求 + 连接 + 带宽限制、CPU/内存阈值 |
+| `relay.idempotency` | 缓存容量 + TTL |
+| `relay.auth` | 启用开关、Token 映射（设备 + Controller）、方法白名单、JWT 配置 |
+| `relay.mqtt` | 启用开关、broker 地址、凭据、遥测间隔、重连配置 |
+| `relay.tls` | 启用开关、证书/密钥/CA 路径 |
+| `observability` | 日志级别/格式、健康检查绑定、审计配置、OpenTelemetry tracing、告警规则 |
 
 ---
 
@@ -357,5 +384,7 @@ gRPC-Relay 的核心目标是实现跨网域的 gRPC 中继能力，使处于内
 - `doc/requirements.md`
 - `doc/architecture.md`
 - `doc/action_plan.md`
+- `doc/RELEASE.md`
+- `doc/v1.0_release_summary.md`
 
 内容侧重于对外介绍、架构概览和落地路径，适合作为项目入口文档。
