@@ -56,12 +56,25 @@ jobs:
           PY
 
       - name: Publish relay-proto
+        id: publish-relay-proto
         run: |
+          CRATE="relay-proto"
+          VERSION="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "relay-proto"))')"
+          echo "RELAY_PROTO_VERSION=$VERSION" >> "$GITHUB_ENV"
+
+          # Check if this version already exists on crates.io
+          PUBLISHED="$(cargo search "$CRATE" --limit 1 2>/dev/null | head -1)"
+          if echo "$PUBLISHED" | grep -qF "\"$VERSION\""; then
+            echo "::notice::$CRATE $VERSION is already on crates.io, skipping publish"
+            echo "SKIP_SDK_PUBLISH=true" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
           cargo publish -p relay-proto
-          relay_proto_version="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "relay-proto"))')"
-          echo "RELAY_PROTO_VERSION=$relay_proto_version" >> "$GITHUB_ENV"
+          echo "SKIP_SDK_PUBLISH=false" >> "$GITHUB_ENV"
 
       - name: Wait for relay-proto index propagation
+        if: env.SKIP_SDK_PUBLISH != 'true'
         run: |
           python <<'PYEOF'
           import json, sys, time, urllib.request, urllib.error, os
@@ -99,10 +112,32 @@ jobs:
           PYEOF
 
       - name: Publish device-sdk
-        run: cargo publish -p device-sdk
+        if: env.SKIP_SDK_PUBLISH != 'true'
+        run: |
+          CRATE="device-sdk"
+          VERSION="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "device-sdk"))')"
+
+          PUBLISHED="$(cargo search "$CRATE" --limit 1 2>/dev/null | head -1)"
+          if echo "$PUBLISHED" | grep -qF "\"$VERSION\""; then
+            echo "::notice::$CRATE $VERSION is already on crates.io, skipping publish"
+            exit 0
+          fi
+
+          cargo publish -p device-sdk
 
       - name: Publish controller-sdk
-        run: cargo publish -p controller-sdk
+        if: env.SKIP_SDK_PUBLISH != 'true'
+        run: |
+          CRATE="controller-sdk"
+          VERSION="$(cargo metadata --no-deps --format-version 1 | python -c 'import json, sys; data = json.load(sys.stdin); print(next(pkg["version"] for pkg in data["packages"] if pkg["name"] == "controller-sdk"))')"
+
+          PUBLISHED="$(cargo search "$CRATE" --limit 1 2>/dev/null | head -1)"
+          if echo "$PUBLISHED" | grep -qF "\"$VERSION\""; then
+            echo "::notice::$CRATE $VERSION is already on crates.io, skipping publish"
+            exit 0
+          fi
+
+          cargo publish -p controller-sdk
 
   docker-release:
     name: Build And Publish Release Image
