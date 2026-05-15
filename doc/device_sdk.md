@@ -6,32 +6,39 @@ This document describes the SDK that an external `stationService` application ca
 
 ## Completion Status
 
-The third action-plan item, "设备侧接入链路", is partially complete in this repository:
+The third action-plan item, "设备侧接入链路", is now substantially complete:
 
 | Capability | SDK status | Relay status |
 | --- | --- | --- |
-| DeviceConnect client stream | Implemented | Proto exists; server skeleton only |
-| Register message | Implemented | Not wired in Relay server |
-| Heartbeat loop | Implemented | Not wired in Relay server |
-| Disconnect handling | Reconnects after stream close | Session cleanup not implemented |
-| Session recovery request | Sends `previous_connection_id` inside recovery window | Recovery registry not implemented |
-| TCP fallback transport | Implemented via tonic HTTP/2 endpoint | Relay gRPC server not started yet |
-| QUIC transport | Config field reserved | Not implemented |
-| Controller-to-device data response | Handler callback + `DataResponse` implemented | Stream router not implemented |
+| DeviceConnect client stream | Implemented | Implemented |
+| Register message | Implemented | Implemented |
+| Heartbeat loop | Implemented | Implemented (with 120s timeout detection) |
+| Disconnect handling | Reconnects after stream close | Session cleanup with MQTT offline publish |
+| Session recovery request | Sends `previous_connection_id` inside recovery window | Recovery registry implemented |
+| TCP fallback transport | Implemented via tonic HTTP/2 endpoint | Relay gRPC server started |
+| QUIC transport | Config field reserved | Deferred to v2 |
+| Controller-to-device data response | Handler callback + `DataResponse` implemented | Stream router implemented |
 
-Conclusion: the SDK side for stationService is available and compiles, but the full device-side access path is not end-to-end successful until Relay implements `DeviceConnect`, session management, and stream routing.
+The SDK side is available and compiles, and the full device-side access path is end-to-end functional against the Relay server.
 
 ## Crate
 
-Add the SDK as a path dependency from the stationService application:
+Add the SDK as a dependency from crates.io:
 
 ```toml
 [dependencies]
-device-sdk = { path = "../gRPC-Relay/crates/device-sdk" }
+device-sdk = "1.0.0-alpha"
 anyhow = "1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+```
+
+Or as a path dependency from a local checkout:
+
+```toml
+[dependencies]
+device-sdk = { path = "../gRPC-Relay/crates/device-sdk" }
 ```
 
 If stationService is in a different repository, publish this crate or vendor it as a git/path dependency according to your build pipeline.
@@ -146,4 +153,4 @@ export STATION_SERVICE_CONFIG=crates/device-sdk/examples/station_service.yaml
 cargo run -p device-sdk --example station_service_minimal
 ```
 
-The example requires a Relay implementation that serves `RelayService::DeviceConnect`. The current Relay binary only starts the health endpoint, so this example currently validates SDK compilation and application wiring rather than a live end-to-end session.
+The example can connect to a running Relay server that serves `RelayService::DeviceConnect`.

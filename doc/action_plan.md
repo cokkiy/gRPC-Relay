@@ -53,22 +53,29 @@
 ---
 
 ### 3) 设备侧接入链路
-**状态**：部分完成（已提供 stationService SDK；Relay 侧 DeviceConnect 服务尚未落地）
+**状态**：基本完成（QUIC transport 推迟至 v2）
 
 **目标**：实现 stationService 与 Relay 的长连接、注册、心跳、断线重连、会话恢复。
 
 **交付物**
-- DeviceConnect 流程：SDK client 已实现；Relay server 尚未实现
-- Register / Heartbeat / Disconnect 逻辑：SDK 已发送 Register/Heartbeat，并在断线后重连；Relay 侧处理尚未实现
-- QUIC 连接与 TCP fallback：SDK 已保留 QUIC 配置并实现 tonic HTTP/2 TCP fallback；QUIC transport 尚未实现
-- 心跳超时、离线判定、重连退避：SDK 已实现重连退避；Relay 心跳超时/离线判定尚未实现
-- session / connection_id 管理：SDK 支持 recovery 窗口内携带 `previous_connection_id`；Relay session registry 尚未实现
+- DeviceConnect 流程：SDK client 已实现；Relay server 已实现 ✅
+- Register / Heartbeat / Disconnect 逻辑：SDK 已实现；Relay 侧已实现 ✅
+- QUIC 连接与 TCP fallback：推迟至 v2（当前使用 tonic HTTP/2 TCP）⏳
+- 心跳超时、离线判定、重连退避：SDK 已实现重连退避；Relay 心跳超时/离线判定已实现 ✅
+- session / connection_id 管理：SDK 支持 recovery 窗口内携带 `previous_connection_id`；Relay session registry 已实现 ✅
 - stationService SDK：见 `crates/device-sdk` 与 `doc/device_sdk.md`
+
+**实现细节**
+- Relay 侧 `DeviceConnect` 双向流：`grpc_service.rs` — `run_device_connect_stream()` 处理 Register/Heartbeat/Data
+- 心跳超时检测：通过 `tokio::time::timeout` 包装 `inbound.next()`，默认 120s 无消息即判定超时，断开连接并发布 MQTT 离线通知（reason=timeout）
+- `RelayState` 新增 `device_last_seen: DashMap<String, Instant>` 及 `touch_device()` 方法追踪设备最后活跃时间
+- `RelayConfig` 新增 `heartbeat_timeout_seconds` 配置项（默认 120s）
+- Session 管理：`RelayState` 维护 `sessions_by_device_id` / `connection_to_device_id` 双向映射，`SessionRegistry` 提供查询门面
 
 **验收备注**
 - stationService 是外部应用，不包含在本仓库内；本仓库交付其接入 SDK、示例代码和文档。
-- 当前可验证项：`cargo check -p device-sdk --examples`。
-- 端到端验收需要后续实现 Relay 的 `RelayService::DeviceConnect`、session 管理和 stream router。
+- 当前可验证项：`cargo test -p relay`（121 tests），含 `device_heartbeat_timeout_disconnects_and_publishes_offline`
+- QUIC transport 推迟至 v2：`crates/relay/src/transport.rs` 为占位 stub，仅启动 tonic HTTP/2 server
 
 **依赖**
 - 协议与接口定义
