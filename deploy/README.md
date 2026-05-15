@@ -175,12 +175,17 @@ Images are published to [ghcr.io/cokkiy/grpc-relay](https://github.com/cokkiy/gR
 |---|---|
 | `latest` | Latest published release |
 | `v<version>` | Specific release (e.g., `v1.0.0-alpha`) |
-| `<sha>` | Specific commit |
+| `sha-<short>` | Specific commit (short SHA tag published by the release workflow) |
 
-To use a specific version:
+To use a specific release version or commit tag:
 
 ```bash
+# Release tag
 export RELAY_VERSION=v1.0.0-alpha
+docker compose up -d
+
+# Commit tag
+export RELAY_VERSION=sha-abc1234
 docker compose up -d
 ```
 
