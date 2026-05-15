@@ -1,6 +1,7 @@
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use tokio::sync::{mpsc, oneshot};
 
 use relay_proto::relay::v1::{DeviceInfo, DeviceResponse, ErrorCode, RelayMessage};
@@ -60,6 +61,7 @@ pub struct RelayState {
     pub sessions_by_device_id: DashMap<String, DeviceSession>,
     pub connection_to_device_id: DashMap<String, String>,
     pub inflight_by_sequence: DashMap<(String, i64), std::sync::Arc<InFlight>>,
+    pub device_last_seen: DashMap<String, Instant>,
     connection_id_counter: AtomicU64,
     controller_connection_count: AtomicU64,
 }
@@ -76,6 +78,7 @@ impl RelayState {
             sessions_by_device_id: DashMap::new(),
             connection_to_device_id: DashMap::new(),
             inflight_by_sequence: DashMap::new(),
+            device_last_seen: DashMap::new(),
             connection_id_counter: AtomicU64::new(1),
             controller_connection_count: AtomicU64::new(0),
         }
@@ -144,12 +147,31 @@ impl RelayState {
             .map(|entry| entry.clone())
     }
 
+    pub fn has_active_device_connection(&self, device_id: &str, connection_id: &str) -> bool {
+        self.sessions_by_device_id
+            .get(device_id)
+            .map(|session| session.connection_id == connection_id)
+            .unwrap_or(false)
+    }
+
+    pub fn touch_device(&self, device_id: &str) {
+        self.device_last_seen
+            .insert(device_id.to_string(), Instant::now());
+    }
+
+    pub fn device_last_seen_seconds(&self, device_id: &str) -> Option<u64> {
+        self.device_last_seen
+            .get(device_id)
+            .map(|entry| entry.value().elapsed().as_secs())
+    }
+
     pub fn remove_device_session(&self, device_id: &str) -> Option<DeviceSession> {
         let session = self
             .sessions_by_device_id
             .remove(device_id)
             .map(|(_, session)| session)?;
         self.connection_to_device_id.remove(&session.connection_id);
+        self.device_last_seen.remove(device_id);
         Some(session)
     }
 

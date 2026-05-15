@@ -30,15 +30,22 @@ This does not mean the repository contains a full standalone Controller product.
 
 ## Crate
 
-Add the SDK as a path dependency from the Controller application:
+Add the SDK as a dependency from crates.io:
 
 ```toml
 [dependencies]
-controller-sdk = { path = "../gRPC-Relay/crates/controller-sdk" }
+controller-sdk = "1.0.0-alpha"
 anyhow = "1"
 bytes = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+```
+
+Or as a path dependency from a local checkout:
+
+```toml
+[dependencies]
+controller-sdk = { path = "../gRPC-Relay/crates/controller-sdk" }
 ```
 
 If the Controller is in a different repository, you can also reference this SDK directly from GitHub:

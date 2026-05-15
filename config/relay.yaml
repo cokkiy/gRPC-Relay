@@ -4,6 +4,7 @@ relay:
   quic_address: 0.0.0.0:50052
   max_device_connections: 10000
   heartbeat_interval_seconds: 30
+  heartbeat_timeout_seconds: 120
   tls:
     enabled: false
     cert_path: certs/relay.crt

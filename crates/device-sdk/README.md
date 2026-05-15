@@ -10,7 +10,7 @@ device-sdk 为设备侧 stationService 提供与 Relay 的 **DeviceConnect** 长
 
 > stationService 是独立应用，不属于本仓库。本 crate 是该应用接入 Relay 的 SDK 边界。
 >
-> 当前 Relay server 仍是骨架，尚未启动 `RelayService::DeviceConnect` 服务；因此 SDK 可编译、可集成，但完整设备侧接入链路还不能在本仓库内端到端跑通。
+> Relay server 已实现 `RelayService::DeviceConnect`，SDK 可编译、可集成，设备侧接入链路可端到端验证。
 
 ---
 
@@ -37,6 +37,13 @@ cargo run -p device-sdk --example station_service_minimal
 ```
 
 ---
+
+## 安装
+
+```toml
+[dependencies]
+device-sdk = "1.0.0-alpha"
+```
 
 ## 使用方式
 

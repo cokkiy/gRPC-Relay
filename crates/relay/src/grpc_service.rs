@@ -42,6 +42,7 @@ pub struct RelayGrpcService {
     stream_router: StreamRouter,
     session_registry: SessionRegistry,
     inflight_timeout: Duration,
+    heartbeat_timeout: Duration,
     auth_service: AuthService,
     rbac: RbacPolicyEngine,
     security_metrics: SecurityMetrics,
@@ -75,6 +76,7 @@ impl RelayGrpcService {
             stream_router: StreamRouter::new(&config.relay.stream),
             session_registry: SessionRegistry::new(state.clone()),
             inflight_timeout: Duration::from_secs(60),
+            heartbeat_timeout: Duration::from_secs(config.relay.heartbeat_timeout_seconds),
             state,
             relay_address: config.relay.address.clone(),
             auth_service,
@@ -120,6 +122,7 @@ impl RelayGrpcService {
         mqtt_publisher: Option<MqttPublisher>,
         audit_logger: Option<std::sync::Arc<AuditLogger>>,
         relay_address: String,
+        heartbeat_timeout: Duration,
         mut inbound: S,
         out_tx: mpsc::Sender<Result<RelayMessage, Status>>,
     ) where
@@ -129,7 +132,39 @@ impl RelayGrpcService {
         let mut current_connection_id: Option<String> = None;
         let mut disconnect_reason = "closed";
 
-        while let Some(next_message) = inbound.next().await {
+        loop {
+            let next_message = match tokio::time::timeout(heartbeat_timeout, inbound.next()).await {
+                Ok(Some(Ok(msg))) => {
+                    // Only update last_seen for messages that belong to the
+                    // currently established device/session for this stream.
+                    if current_connection_id
+                        .as_deref()
+                        .filter(|connection_id| {
+                            current_device_id.as_deref() == Some(msg.device_id.as_str())
+                                && state.has_active_device_connection(&msg.device_id, connection_id)
+                        })
+                        .is_some()
+                    {
+                        state.touch_device(&msg.device_id);
+                    }
+                    Some(Ok(msg))
+                }
+                Ok(Some(Err(e))) => Some(Err(e)),
+                Ok(None) => None,
+                Err(_elapsed) => {
+                    tracing::warn!(
+                        device_id = %current_device_id.as_deref().unwrap_or("unknown"),
+                        timeout_seconds = heartbeat_timeout.as_secs(),
+                        "device heartbeat timeout"
+                    );
+                    disconnect_reason = "timeout";
+                    break;
+                }
+            };
+
+            let Some(next_message) = next_message else {
+                break;
+            };
             let Ok(dev_msg) = next_message else {
                 disconnect_reason = "error";
                 break;
@@ -431,9 +466,8 @@ impl RelayGrpcService {
                 .get(did.as_str())
                 .map(|s| s.connection_id.clone());
             let matches_stream_connection = current_connection_id
-                .as_ref()
-                .zip(current_session_connection_id.as_ref())
-                .map(|(stream_cid, session_cid)| stream_cid == session_cid)
+                .as_deref()
+                .map(|stream_cid| state.has_active_device_connection(did, stream_cid))
                 .unwrap_or(false);
 
             if matches_stream_connection {
@@ -991,6 +1025,7 @@ mod tests {
                 quic_address: "127.0.0.1:50052".into(),
                 max_device_connections: 1_000,
                 heartbeat_interval_seconds: 30,
+                heartbeat_timeout_seconds: 120,
                 stream: StreamConfig {
                     idle_timeout_seconds: 60,
                     max_active_streams: 100,
@@ -1107,6 +1142,7 @@ mod tests {
             service.mqtt_publisher.clone(),
             service.audit_logger.clone(),
             service.relay_address.clone(),
+            service.heartbeat_timeout,
             inbound,
             relay_tx,
         ));
@@ -1562,6 +1598,7 @@ mod tests {
             service.mqtt_publisher.clone(),
             service.audit_logger.clone(),
             service.relay_address.clone(),
+            service.heartbeat_timeout,
             inbound,
             relay_tx,
         ));
@@ -1627,6 +1664,84 @@ mod tests {
         drop(first_device_tx);
     }
 
+    #[tokio::test]
+    async fn stale_stream_heartbeat_does_not_refresh_last_seen() {
+        let (service, state) = service_with_state(test_config());
+        let (first_device_tx, mut first_stream, first_connection_id) =
+            start_device_loop(&service, "dev-1").await;
+        let (second_device_tx, mut second_stream, second_connection_id) =
+            start_device_loop(&service, "dev-1").await;
+
+        second_device_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-1".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Heartbeat(
+                    relay_proto::relay::v1::HeartbeatRequest {
+                        connection_id: second_connection_id.clone(),
+                        timestamp: 0,
+                    },
+                )),
+            }))
+            .await
+            .unwrap();
+        let _ = second_stream.recv().await.unwrap().unwrap();
+
+        let last_seen_before = *state
+            .device_last_seen
+            .get("dev-1")
+            .expect("active stream should update last_seen")
+            .value();
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        first_device_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-1".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Heartbeat(
+                    relay_proto::relay::v1::HeartbeatRequest {
+                        connection_id: first_connection_id.clone(),
+                        timestamp: 0,
+                    },
+                )),
+            }))
+            .await
+            .unwrap();
+        let _ = first_stream.recv().await.unwrap().unwrap();
+
+        let last_seen_after_stale = *state
+            .device_last_seen
+            .get("dev-1")
+            .expect("last_seen should still exist")
+            .value();
+        assert_eq!(last_seen_after_stale, last_seen_before);
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        second_device_tx
+            .send(Ok(DeviceMessage {
+                device_id: "dev-1".into(),
+                token: "device-token".into(),
+                payload: Some(device_message::Payload::Heartbeat(
+                    relay_proto::relay::v1::HeartbeatRequest {
+                        connection_id: second_connection_id,
+                        timestamp: 0,
+                    },
+                )),
+            }))
+            .await
+            .unwrap();
+        let _ = second_stream.recv().await.unwrap().unwrap();
+
+        let last_seen_after_active = *state
+            .device_last_seen
+            .get("dev-1")
+            .expect("active heartbeat should refresh last_seen")
+            .value();
+        assert!(last_seen_after_active > last_seen_before);
+    }
+
     fn test_config_with_auth_enabled() -> AppConfig {
         use crate::config::{ControllerAuthEntry, DeviceAuthEntry};
 
@@ -1665,6 +1780,7 @@ mod tests {
                 quic_address: "127.0.1:50052".into(),
                 max_device_connections: 1_000,
                 heartbeat_interval_seconds: 30,
+                heartbeat_timeout_seconds: 120,
                 stream: StreamConfig {
                     idle_timeout_seconds: 60,
                     max_active_streams: 100,
@@ -1782,6 +1898,7 @@ mod tests {
             service.mqtt_publisher.clone(),
             service.audit_logger.clone(),
             service.relay_address.clone(),
+            service.heartbeat_timeout,
             inbound,
             relay_tx,
         ));
@@ -2049,6 +2166,47 @@ mod tests {
 
         assert_eq!(err.code(), tonic::Code::PermissionDenied);
     }
+
+    #[tokio::test]
+    async fn device_heartbeat_timeout_disconnects_and_publishes_offline() {
+        let mut cfg = test_config();
+        cfg.relay.heartbeat_timeout_seconds = 1; // short timeout for test
+        let (service, _state, mut mqtt_rx) = service_with_mqtt(cfg);
+        let (device_tx, mut device_stream, _connection_id) =
+            start_device_loop(&service, "dev-1").await;
+
+        // Verify device registered and online event published
+        let online = mqtt_rx.recv().await.unwrap();
+        match online {
+            mqtt::MqttPublishRequest::DeviceOnline { device_id, .. } => {
+                assert_eq!(device_id, "dev-1");
+            }
+            other => panic!("unexpected mqtt event: {other:?}"),
+        }
+
+        // Stop sending heartbeats — just wait for the stream to close
+        let response = tokio::time::timeout(Duration::from_secs(2), device_stream.recv())
+            .await
+            .expect("device stream should close before test timeout");
+        assert!(
+            response.is_none(),
+            "device stream should close due to heartbeat timeout"
+        );
+
+        // Offline event with timeout reason should be published
+        let offline = mqtt_rx.recv().await.unwrap();
+        match offline {
+            mqtt::MqttPublishRequest::DeviceOffline {
+                device_id, reason, ..
+            } => {
+                assert_eq!(device_id, "dev-1");
+                assert_eq!(reason, "timeout");
+            }
+            other => panic!("unexpected mqtt event: {other:?}"),
+        }
+
+        drop(device_tx);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2138,6 +2296,7 @@ impl RelayService for RelayGrpcService {
         let mqtt_publisher = self.mqtt_publisher.clone();
         let audit_logger = self.audit_logger.clone();
         let relay_address = self.relay_address.clone();
+        let heartbeat_timeout = self.heartbeat_timeout;
         tokio::spawn(async move {
             Self::run_device_connect_stream(
                 state,
@@ -2150,6 +2309,7 @@ impl RelayService for RelayGrpcService {
                 mqtt_publisher,
                 audit_logger,
                 relay_address,
+                heartbeat_timeout,
                 inbound,
                 out_tx,
             )
