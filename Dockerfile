@@ -61,7 +61,7 @@ USER relay
 EXPOSE 50051/tcp 50052/udp 8080/tcp
 
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 --start-period=10s \
-    CMD ["curl", "-f", "http://localhost:8080/health"]
+    CMD ["curl", "-f", "http://localhost:8080/health/ready"]
 
 # OCI labels
 LABEL org.opencontainers.image.title="gRPC-Relay" \

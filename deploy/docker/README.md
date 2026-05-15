@@ -111,7 +111,7 @@ docker run -d \
 - **Builder stage**: installs Rust toolchain, pre-fetches dependencies via dummy sources, then builds `--release --locked`
 - **Runtime stage**: copies the `relay` binary and config, creates non-root `relay` user, drops privileges
 - **OCI labels**: `org.opencontainers.image.*` set for title, description, license, source
-- **Healthcheck**: `curl -f http://localhost:8080/health` every 30s
+- **Healthcheck**: `curl -f http://localhost:8080/health/ready` every 30s
 
 ## Configuration overrides
 
