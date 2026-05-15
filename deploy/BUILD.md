@@ -227,12 +227,12 @@ docker builder prune --filter "until=24h"
 
 ## CI pipeline
 
-The CI workflow (`.github/workflows/ci.yml`) runs on every push to `master` and every PR:
+The CI workflow (`.github/workflows/ci.yml`) runs on pushes to `master` and `main`, on pull requests, and on version tags matching `v*`:
 
 1. **Check**: `cargo fmt --check`, `cargo clippy`, `cargo check --workspace`
 2. **Test**: `cargo test --workspace --lib` and `--tests` (with Mosquitto service container)
 3. **Coverage**: `cargo llvm-cov --workspace --fail-under-lines 80`
-4. **Docker Build**: builds the image via Docker Buildx with GHA caching; on `v*` tags, pushes to `ghcr.io/cokkiy/grpc-relay`
+4. **Docker Build**: builds the image via Docker Buildx with GHA caching on CI runs; image publishing to `ghcr.io/cokkiy/grpc-relay` only happens for the workflow's tag/release publishing path, not for ordinary branch or PR builds
 
 ## Troubleshooting
 
