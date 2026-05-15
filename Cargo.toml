@@ -8,7 +8,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-version = "1.0.0-alpha"
+version = "1.0.0-rc1"
 license = "MIT"
 authors = ["gRPC-Relay Contributors"]
 repository = "https://github.com/cokkiy/gRPC-Relay"
