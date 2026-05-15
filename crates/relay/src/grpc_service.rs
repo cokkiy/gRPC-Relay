@@ -135,8 +135,11 @@ impl RelayGrpcService {
         loop {
             let next_message = match tokio::time::timeout(heartbeat_timeout, inbound.next()).await {
                 Ok(Some(Ok(msg))) => {
-                    // Update last_seen on any valid message
-                    if !msg.device_id.is_empty() {
+                    // Only update last_seen for messages that belong to the
+                    // currently established device/session for this stream.
+                    if current_connection_id.is_some()
+                        && current_device_id.as_deref() == Some(msg.device_id.as_str())
+                    {
                         state.touch_device(&msg.device_id);
                     }
                     Some(Ok(msg))
