@@ -10,7 +10,7 @@ Build the `relay` binary from source, or build the Docker image locally.
 | OpenSSL | libssl-dev | Yes | Linking dependency for TLS |
 | pkg-config | any | Yes | Build dependency detection |
 
-protobuf compiler is **not** required — `relay-proto` vendors `protoc` via `protoc-bin-vendored`.
+Protobuf compiler is **not** required — `relay-proto` vendors `protoc` via `protoc-bin-vendored`.
 
 ### Install system dependencies
 
