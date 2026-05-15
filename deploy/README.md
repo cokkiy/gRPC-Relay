@@ -118,7 +118,7 @@ kubectl apply -k deploy/kubernetes
 
 - **Image**: `ghcr.io/cokkiy/grpc-relay:latest` (override via kustomize `images`)
 - **Ports**: gRPC `50051`, health/metrics `8080`
-- **Probes**: liveness (`/health`), readiness (`/health`), startup (`/health/startup`)
+- **Probes**: liveness (`/health/live`), readiness (`/health/ready`), startup (`/health/startup`)
 - **Resources**: requests `2 CPU / 4 Gi`, limits `8 CPU / 16 Gi`
 - **Security**: non-root user (1000), read-only root filesystem, no privilege escalation, all capabilities dropped
 - **Anti-affinity**: prefers scheduling pods on different nodes
